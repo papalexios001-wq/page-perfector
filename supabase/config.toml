@@ -26,3 +26,6 @@ verify_jwt = false
 
 [functions.fetch-page-content]
 verify_jwt = false
+
+[functions.optimize-content]
+verify_jwt = false

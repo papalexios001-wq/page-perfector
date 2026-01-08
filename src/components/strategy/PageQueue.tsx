@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { List, Search, Filter, Zap, Eye, Trash2, RotateCcw, FileText, ChevronLeft, ChevronRight, RefreshCw, Loader2 } from 'lucide-react';
+import { List, Search, Filter, Zap, Eye, Trash2, RotateCcw, FileText, ChevronLeft, ChevronRight, RefreshCw, Loader2, CheckCircle2, XCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -10,6 +10,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { StatusBadge } from '@/components/shared/StatusBadge';
 import { ScoreIndicator } from '@/components/shared/ScoreIndicator';
 import { supabase } from '@/integrations/supabase/client';
+import { invokeEdgeFunction } from '@/lib/supabase';
+import { useConfigStore } from '@/stores/config-store';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -33,13 +35,23 @@ interface DBPage {
   updated_at: string | null;
 }
 
+interface OptimizationProgress {
+  pageId: string;
+  status: 'pending' | 'running' | 'success' | 'error';
+  message?: string;
+}
+
 export function PageQueue() {
   const [pages, setPages] = useState<DBPage[]>([]);
   const [selectedPages, setSelectedPages] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isOptimizing, setIsOptimizing] = useState(false);
+  const [optimizationProgress, setOptimizationProgress] = useState<OptimizationProgress[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
+  
+  const { wordpress } = useConfigStore();
 
   const fetchPages = async () => {
     setIsLoading(true);
@@ -79,13 +91,118 @@ export function PageQueue() {
     }
   };
 
+  const optimizeSinglePage = useCallback(async (pageId: string): Promise<boolean> => {
+    if (!wordpress.siteUrl || !wordpress.username || !wordpress.applicationPassword) {
+      return false;
+    }
+
+    const { data, error } = await invokeEdgeFunction<{
+      success: boolean;
+      message: string;
+      optimization?: Record<string, unknown>;
+    }>('optimize-content', {
+      pageId,
+      siteUrl: wordpress.siteUrl,
+      username: wordpress.username,
+      applicationPassword: wordpress.applicationPassword,
+    });
+
+    if (error) {
+      console.error(`[Optimize] Error for ${pageId}:`, error);
+      return false;
+    }
+
+    return data?.success || false;
+  }, [wordpress]);
+
   const handleOptimizeSelected = async () => {
     if (selectedPages.length === 0) {
       toast.error('Please select pages to optimize');
       return;
     }
-    toast.success(`Starting optimization for ${selectedPages.length} pages...`);
-    // TODO: Implement actual optimization logic
+
+    if (!wordpress.isConnected || !wordpress.siteUrl) {
+      toast.error('WordPress not connected', {
+        description: 'Go to Configuration tab and connect your WordPress site first.',
+      });
+      return;
+    }
+
+    setIsOptimizing(true);
+    const initialProgress = selectedPages.map(id => ({ pageId: id, status: 'pending' as const }));
+    setOptimizationProgress(initialProgress);
+
+    toast.info(`Starting optimization for ${selectedPages.length} pages...`);
+
+    let successCount = 0;
+    let errorCount = 0;
+
+    // Process pages sequentially to avoid rate limits
+    for (const pageId of selectedPages) {
+      // Update progress to running
+      setOptimizationProgress(prev => 
+        prev.map(p => p.pageId === pageId ? { ...p, status: 'running' } : p)
+      );
+
+      // Update page status in local state
+      setPages(prev => 
+        prev.map(p => p.id === pageId ? { ...p, status: 'optimizing' } : p)
+      );
+
+      const success = await optimizeSinglePage(pageId);
+
+      if (success) {
+        successCount++;
+        setOptimizationProgress(prev => 
+          prev.map(p => p.pageId === pageId ? { ...p, status: 'success', message: 'Optimized' } : p)
+        );
+      } else {
+        errorCount++;
+        setOptimizationProgress(prev => 
+          prev.map(p => p.pageId === pageId ? { ...p, status: 'error', message: 'Failed' } : p)
+        );
+      }
+
+      // Small delay between requests to be nice to the API
+      if (selectedPages.indexOf(pageId) < selectedPages.length - 1) {
+        await new Promise(r => setTimeout(r, 500));
+      }
+    }
+
+    // Refresh pages from database to get updated statuses
+    await fetchPages();
+
+    setIsOptimizing(false);
+    setSelectedPages([]);
+    setOptimizationProgress([]);
+
+    if (successCount > 0 && errorCount === 0) {
+      toast.success(`Successfully optimized ${successCount} pages!`);
+    } else if (successCount > 0 && errorCount > 0) {
+      toast.warning(`Optimized ${successCount} pages, ${errorCount} failed`);
+    } else {
+      toast.error(`Optimization failed for all ${errorCount} pages`);
+    }
+  };
+
+  const handleOptimizeSingle = async (pageId: string) => {
+    if (!wordpress.isConnected || !wordpress.siteUrl) {
+      toast.error('WordPress not connected');
+      return;
+    }
+
+    setPages(prev => prev.map(p => p.id === pageId ? { ...p, status: 'optimizing' } : p));
+    toast.info('Starting optimization...');
+
+    const success = await optimizeSinglePage(pageId);
+    
+    await fetchPages();
+
+    if (success) {
+      toast.success('Page optimized successfully!');
+    } else {
+      toast.error('Optimization failed');
+    }
   };
 
   const handleDelete = async (id: string) => {
@@ -140,9 +257,14 @@ export function PageQueue() {
                 size="sm"
                 className="h-8 gap-1"
                 onClick={handleOptimizeSelected}
+                disabled={isOptimizing}
               >
-                <Zap className="w-3.5 h-3.5" />
-                Optimize {selectedPages.length} Selected
+                {isOptimizing ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Zap className="w-3.5 h-3.5" />
+                )}
+                {isOptimizing ? 'Optimizing...' : `Optimize ${selectedPages.length} Selected`}
               </Button>
             )}
             <Button
@@ -245,12 +367,29 @@ export function PageQueue() {
                         <TableCell>
                           <div className="flex items-center justify-end gap-1">
                             {(page.status === 'pending' || !page.status) && (
-                              <Button variant="ghost" size="icon" className="h-7 w-7" title="Quick Optimize">
+                              <Button 
+                                variant="ghost" 
+                                size="icon" 
+                                className="h-7 w-7" 
+                                title="Quick Optimize"
+                                onClick={() => handleOptimizeSingle(page.id)}
+                                disabled={isOptimizing}
+                              >
                                 <Zap className="w-3.5 h-3.5" />
                               </Button>
                             )}
+                            {page.status === 'optimizing' && (
+                              <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                            )}
                             {page.status === 'failed' && (
-                              <Button variant="ghost" size="icon" className="h-7 w-7" title="Retry">
+                              <Button 
+                                variant="ghost" 
+                                size="icon" 
+                                className="h-7 w-7" 
+                                title="Retry"
+                                onClick={() => handleOptimizeSingle(page.id)}
+                                disabled={isOptimizing}
+                              >
                                 <RotateCcw className="w-3.5 h-3.5" />
                               </Button>
                             )}
