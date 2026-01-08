@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.90.0';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -14,6 +15,7 @@ interface WordPressValidationRequest {
 interface WordPressValidationResponse {
   success: boolean;
   message: string;
+  siteId?: string;
   siteInfo?: {
     name: string;
     description: string;
@@ -158,10 +160,54 @@ serve(async (req) => {
     const canPublish = capabilities.publish_posts === true || capabilities.edit_published_posts === true;
     const canManageOptions = capabilities.manage_options === true;
 
+    // Save to database
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    // Upsert site in wp_sites table
+    const { data: siteData, error: dbError } = await supabase
+      .from('wp_sites')
+      .upsert({
+        site_url: normalizedUrl,
+        username: username,
+        site_name: rootData.name || 'Unknown',
+        site_description: rootData.description || '',
+        capabilities: {
+          canEdit,
+          canPublish,
+          canManageOptions,
+          userRoles: userData.roles || [],
+        },
+        connected_at: new Date().toISOString(),
+      }, {
+        onConflict: 'site_url',
+      })
+      .select()
+      .single();
+
+    if (dbError) {
+      console.error('[WordPress Validation] Database error:', dbError);
+      // Continue even if DB fails - connection validation succeeded
+    }
+
+    console.log('[WordPress Validation] Site saved to database:', siteData?.id);
+
+    // Log activity
+    if (siteData?.id) {
+      await supabase.from('activity_log').insert({
+        site_id: siteData.id,
+        type: 'success',
+        message: `WordPress site connected: ${rootData.name}`,
+        details: { url: normalizedUrl, user: userData.name },
+      });
+    }
+
     // Build response
     const response: WordPressValidationResponse = {
       success: true,
       message: 'WordPress connection validated successfully',
+      siteId: siteData?.id,
       siteInfo: {
         name: rootData.name || 'Unknown',
         description: rootData.description || '',
@@ -182,7 +228,7 @@ serve(async (req) => {
       }
     };
 
-    console.log('[WordPress Validation] Validation successful:', JSON.stringify(response, null, 2));
+    console.log('[WordPress Validation] Validation successful');
 
     return new Response(
       JSON.stringify(response),

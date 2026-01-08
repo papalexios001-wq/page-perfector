@@ -14,6 +14,7 @@ import { toast } from 'sonner';
 interface ValidationResult {
   success: boolean;
   message: string;
+  siteId?: string;
   siteInfo?: {
     name: string;
     description: string;
@@ -96,6 +97,7 @@ export function WordPressConnection() {
 
     if (result.success) {
       setWordPress({
+        siteId: result.siteId,
         isConnected: true,
         lastConnectedAt: new Date().toISOString(),
       });

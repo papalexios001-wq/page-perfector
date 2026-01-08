@@ -14,7 +14,215 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      activity_log: {
+        Row: {
+          created_at: string | null
+          details: Json | null
+          id: string
+          job_id: string | null
+          message: string
+          page_id: string | null
+          site_id: string | null
+          type: string
+        }
+        Insert: {
+          created_at?: string | null
+          details?: Json | null
+          id?: string
+          job_id?: string | null
+          message: string
+          page_id?: string | null
+          site_id?: string | null
+          type: string
+        }
+        Update: {
+          created_at?: string | null
+          details?: Json | null
+          id?: string
+          job_id?: string | null
+          message?: string
+          page_id?: string | null
+          site_id?: string | null
+          type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "activity_log_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "activity_log_page_id_fkey"
+            columns: ["page_id"]
+            isOneToOne: false
+            referencedRelation: "pages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "activity_log_site_id_fkey"
+            columns: ["site_id"]
+            isOneToOne: false
+            referencedRelation: "wp_sites"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      jobs: {
+        Row: {
+          ai_cost: number | null
+          ai_tokens_used: number | null
+          completed_at: string | null
+          created_at: string | null
+          current_step: string | null
+          error_message: string | null
+          id: string
+          page_id: string | null
+          progress: number | null
+          result: Json | null
+          started_at: string | null
+          status: string | null
+        }
+        Insert: {
+          ai_cost?: number | null
+          ai_tokens_used?: number | null
+          completed_at?: string | null
+          created_at?: string | null
+          current_step?: string | null
+          error_message?: string | null
+          id?: string
+          page_id?: string | null
+          progress?: number | null
+          result?: Json | null
+          started_at?: string | null
+          status?: string | null
+        }
+        Update: {
+          ai_cost?: number | null
+          ai_tokens_used?: number | null
+          completed_at?: string | null
+          created_at?: string | null
+          current_step?: string | null
+          error_message?: string | null
+          id?: string
+          page_id?: string | null
+          progress?: number | null
+          result?: Json | null
+          started_at?: string | null
+          status?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "jobs_page_id_fkey"
+            columns: ["page_id"]
+            isOneToOne: false
+            referencedRelation: "pages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pages: {
+        Row: {
+          categories: string[] | null
+          created_at: string | null
+          featured_image: string | null
+          id: string
+          post_id: number | null
+          post_type: string | null
+          retry_count: number | null
+          score_after: Json | null
+          score_before: Json | null
+          site_id: string | null
+          slug: string
+          status: string | null
+          tags: string[] | null
+          title: string
+          updated_at: string | null
+          url: string
+          word_count: number | null
+        }
+        Insert: {
+          categories?: string[] | null
+          created_at?: string | null
+          featured_image?: string | null
+          id?: string
+          post_id?: number | null
+          post_type?: string | null
+          retry_count?: number | null
+          score_after?: Json | null
+          score_before?: Json | null
+          site_id?: string | null
+          slug: string
+          status?: string | null
+          tags?: string[] | null
+          title: string
+          updated_at?: string | null
+          url: string
+          word_count?: number | null
+        }
+        Update: {
+          categories?: string[] | null
+          created_at?: string | null
+          featured_image?: string | null
+          id?: string
+          post_id?: number | null
+          post_type?: string | null
+          retry_count?: number | null
+          score_after?: Json | null
+          score_before?: Json | null
+          site_id?: string | null
+          slug?: string
+          status?: string | null
+          tags?: string[] | null
+          title?: string
+          updated_at?: string | null
+          url?: string
+          word_count?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pages_site_id_fkey"
+            columns: ["site_id"]
+            isOneToOne: false
+            referencedRelation: "wp_sites"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      wp_sites: {
+        Row: {
+          capabilities: Json | null
+          connected_at: string | null
+          created_at: string | null
+          id: string
+          site_description: string | null
+          site_name: string | null
+          site_url: string
+          username: string
+        }
+        Insert: {
+          capabilities?: Json | null
+          connected_at?: string | null
+          created_at?: string | null
+          id?: string
+          site_description?: string | null
+          site_name?: string | null
+          site_url: string
+          username: string
+        }
+        Update: {
+          capabilities?: Json | null
+          connected_at?: string | null
+          created_at?: string | null
+          id?: string
+          site_description?: string | null
+          site_name?: string | null
+          site_url?: string
+          username?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never

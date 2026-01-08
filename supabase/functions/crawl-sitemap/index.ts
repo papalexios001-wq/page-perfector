@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.90.0';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -6,6 +7,7 @@ const corsHeaders = {
 };
 
 interface CrawlRequest {
+  siteId: string;
   siteUrl: string;
   sitemapPath: string;
   username: string;
@@ -37,7 +39,7 @@ interface PageInfo {
 interface CrawlResponse {
   success: boolean;
   message: string;
-  pages: PageInfo[];
+  pagesAdded: number;
   totalFound: number;
   errors: string[];
 }
@@ -48,7 +50,6 @@ const MAX_SITEMAP_DEPTH = 3;
 async function fetchSitemap(url: string, visitedUrls: Set<string> = new Set(), depth: number = 0): Promise<string[]> {
   console.log(`[Sitemap Crawler] Fetching sitemap (depth ${depth}): ${url}`);
   
-  // Prevent infinite loops
   if (depth > MAX_SITEMAP_DEPTH) {
     console.log(`[Sitemap Crawler] Max depth reached, skipping: ${url}`);
     return [];
@@ -60,7 +61,6 @@ async function fetchSitemap(url: string, visitedUrls: Set<string> = new Set(), d
   }
   visitedUrls.add(url);
 
-  // Handle .gz compressed sitemaps
   const isGzipped = url.endsWith('.gz');
   
   const response = await fetch(url, {
@@ -78,7 +78,6 @@ async function fetchSitemap(url: string, visitedUrls: Set<string> = new Set(), d
   let xmlText: string;
   
   if (isGzipped) {
-    // Decompress gzipped content
     const buffer = await response.arrayBuffer();
     const decompressed = new Response(
       new Response(buffer).body?.pipeThrough(new DecompressionStream('gzip'))
@@ -89,12 +88,9 @@ async function fetchSitemap(url: string, visitedUrls: Set<string> = new Set(), d
   }
 
   const urls: string[] = [];
-  
-  // Check if this is a sitemapindex (contains other sitemaps)
   const isSitemapIndex = xmlText.includes('<sitemapindex') || xmlText.includes('<sitemap>');
   
   if (isSitemapIndex) {
-    // Extract sitemap locations from sitemapindex
     const sitemapRegex = /<sitemap>\s*<loc>([^<]+)<\/loc>/g;
     let match;
     
@@ -109,19 +105,16 @@ async function fetchSitemap(url: string, visitedUrls: Set<string> = new Set(), d
       }
     }
   } else {
-    // Extract page URLs from urlset
     const locRegex = /<url>\s*<loc>([^<]+)<\/loc>/g;
     let match;
     
     while ((match = locRegex.exec(xmlText)) !== null) {
       const loc = match[1].trim();
-      // Skip sitemap files
       if (!loc.includes('sitemap') || !loc.endsWith('.xml')) {
         urls.push(loc);
       }
     }
     
-    // Fallback: simple loc extraction if no <url> wrappers
     if (urls.length === 0) {
       const simpleLoc = /<loc>([^<]+)<\/loc>/g;
       while ((match = simpleLoc.exec(xmlText)) !== null) {
@@ -144,14 +137,12 @@ async function fetchWordPressPostInfo(
   postType: string
 ): Promise<Partial<PageInfo> | null> {
   try {
-    // Extract slug from URL
     const urlObj = new URL(pageUrl);
     const pathParts = urlObj.pathname.split('/').filter(Boolean);
     const slug = pathParts[pathParts.length - 1] || '';
     
     if (!slug) return null;
 
-    // Try custom post type first, then fall back to standard endpoints
     const endpoints = postType === 'page' 
       ? ['pages'] 
       : postType === 'post' 
@@ -161,8 +152,6 @@ async function fetchWordPressPostInfo(
     for (const endpoint of endpoints) {
       const searchUrl = `${baseUrl}/wp-json/wp/v2/${endpoint}?slug=${encodeURIComponent(slug)}&_embed`;
       
-      console.log(`[Sitemap Crawler] Trying endpoint: ${searchUrl}`);
-      
       const response = await fetch(searchUrl, {
         headers: {
           'Accept': 'application/json',
@@ -171,21 +160,15 @@ async function fetchWordPressPostInfo(
         },
       });
 
-      if (!response.ok) {
-        console.log(`[Sitemap Crawler] Endpoint ${endpoint} returned ${response.status}`);
-        continue;
-      }
+      if (!response.ok) continue;
 
       const posts = await response.json();
       if (!posts || posts.length === 0) continue;
 
       const post = posts[0];
-      
-      // Count words in content
       const plainText = post.content?.rendered?.replace(/<[^>]*>/g, ' ') || '';
       const wordCount = plainText.split(/\s+/).filter(Boolean).length;
 
-      // Extract categories and tags
       const categories: string[] = [];
       const tags: string[] = [];
       
@@ -202,7 +185,6 @@ async function fetchWordPressPostInfo(
         });
       }
 
-      // Get featured image
       let featuredImage: string | undefined;
       if (post._embedded?.['wp:featuredmedia']?.[0]?.source_url) {
         featuredImage = post._embedded['wp:featuredmedia'][0].source_url;
@@ -225,7 +207,6 @@ async function fetchWordPressPostInfo(
   }
 }
 
-// Fetch page content directly if WP API fails
 async function fetchPageContent(url: string): Promise<{ wordCount: number; hasH1: boolean; hasH2: boolean; hasSchema: boolean }> {
   try {
     const response = await fetch(url, {
@@ -240,12 +221,9 @@ async function fetchPageContent(url: string): Promise<{ wordCount: number; hasH1
     }
 
     const html = await response.text();
-    
-    // Extract body content
     const bodyMatch = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
     const bodyContent = bodyMatch ? bodyMatch[1] : html;
     
-    // Strip tags and count words
     const plainText = bodyContent
       .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
       .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
@@ -254,8 +232,6 @@ async function fetchPageContent(url: string): Promise<{ wordCount: number; hasH1
       .trim();
     
     const wordCount = plainText.split(/\s+/).filter(Boolean).length;
-    
-    // Check for structural elements
     const hasH1 = /<h1[^>]*>/i.test(html);
     const hasH2 = /<h2[^>]*>/i.test(html);
     const hasSchema = /application\/ld\+json/i.test(html);
@@ -267,7 +243,6 @@ async function fetchPageContent(url: string): Promise<{ wordCount: number; hasH1
   }
 }
 
-// Deterministic scoring based on real content analysis
 function calculateDeterministicScore(
   wordCount: number,
   hasH1: boolean,
@@ -277,7 +252,6 @@ function calculateDeterministicScore(
   hasTags: boolean,
   hasFeaturedImage: boolean
 ): { overall: number; components: Record<string, number> } {
-  // Content depth: 0-100 based on word count (ideal: 1500-3000 words)
   let contentDepth = 0;
   if (wordCount >= 2500) contentDepth = 100;
   else if (wordCount >= 1500) contentDepth = 80 + ((wordCount - 1500) / 1000) * 20;
@@ -285,31 +259,22 @@ function calculateDeterministicScore(
   else if (wordCount >= 300) contentDepth = 20 + ((wordCount - 300) / 500) * 30;
   else contentDepth = (wordCount / 300) * 20;
 
-  // Readability: based on content presence
   const readability = wordCount > 100 ? 70 : 30;
 
-  // Structure: based on heading usage
   let structure = 30;
   if (hasH1) structure += 30;
   if (hasH2) structure += 40;
 
-  // SEO on-page: metadata and categorization
   let seoOnPage = 40;
   if (hasCategories) seoOnPage += 20;
   if (hasTags) seoOnPage += 20;
   if (hasFeaturedImage) seoOnPage += 20;
 
-  // Schema markup
   const schemaMarkup = hasSchema ? 80 : 10;
-
-  // Internal links: baseline (would need actual link analysis)
   const internalLinks = 40;
-
-  // Engagement/EEAT: baseline
   const engagement = 50;
   const eeat = 40;
 
-  // Weighted overall score
   const overall = Math.floor(
     contentDepth * 0.20 +
     readability * 0.10 +
@@ -343,6 +308,7 @@ serve(async (req) => {
 
   try {
     const { 
+      siteId,
       siteUrl, 
       sitemapPath, 
       username, 
@@ -351,7 +317,7 @@ serve(async (req) => {
       maxPages = 100,
     }: CrawlRequest = await req.json();
 
-    console.log(`[Sitemap Crawler] Starting crawl for: ${siteUrl}${sitemapPath}`);
+    console.log(`[Sitemap Crawler] Starting crawl for site ${siteId}: ${siteUrl}${sitemapPath}`);
 
     // Validate inputs
     if (!siteUrl || !sitemapPath) {
@@ -359,13 +325,18 @@ serve(async (req) => {
         JSON.stringify({
           success: false,
           message: 'Missing required fields: siteUrl and sitemapPath are required',
-          pages: [],
+          pagesAdded: 0,
           totalFound: 0,
           errors: ['siteUrl and sitemapPath are required'],
         } as CrawlResponse),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+
+    // Initialize Supabase client
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     // Normalize URL
     let normalizedUrl = siteUrl.trim();
@@ -379,20 +350,29 @@ serve(async (req) => {
       ? sitemapPath 
       : `${normalizedUrl}${sitemapPath.startsWith('/') ? '' : '/'}${sitemapPath}`;
 
-    // Fetch sitemap with proper handling
+    // Fetch sitemap
     let allUrls: string[];
     try {
       allUrls = await fetchSitemap(sitemapUrl);
-      
-      // De-duplicate URLs
       allUrls = [...new Set(allUrls)];
     } catch (error) {
       console.error('[Sitemap Crawler] Failed to fetch sitemap:', error);
+      
+      // Log error to activity_log
+      if (siteId) {
+        await supabase.from('activity_log').insert({
+          site_id: siteId,
+          type: 'error',
+          message: `Failed to fetch sitemap: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          details: { sitemapUrl },
+        });
+      }
+      
       return new Response(
         JSON.stringify({
           success: false,
           message: `Failed to fetch sitemap: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          pages: [],
+          pagesAdded: 0,
           totalFound: 0,
           errors: [error instanceof Error ? error.message : 'Failed to fetch sitemap'],
         } as CrawlResponse),
@@ -405,7 +385,7 @@ serve(async (req) => {
         JSON.stringify({
           success: true,
           message: 'Sitemap is accessible but contains no page URLs',
-          pages: [],
+          pagesAdded: 0,
           totalFound: 0,
           errors: [],
         } as CrawlResponse),
@@ -413,17 +393,15 @@ serve(async (req) => {
       );
     }
 
-    // Filter and limit URLs
     const filteredUrls = allUrls.slice(0, maxPages);
     console.log(`[Sitemap Crawler] Processing ${filteredUrls.length} URLs (max: ${maxPages}, total found: ${allUrls.length})`);
 
-    // Create auth header
     const authHeader = username && applicationPassword 
       ? 'Basic ' + btoa(`${username}:${applicationPassword.replace(/\s+/g, '')}`)
       : '';
 
-    // Process URLs
-    const pages: PageInfo[] = [];
+    // Process URLs and prepare for database insert
+    const pagesToInsert: any[] = [];
     const errors: string[] = [];
 
     for (const url of filteredUrls) {
@@ -432,13 +410,11 @@ serve(async (req) => {
         const pathParts = urlObj.pathname.split('/').filter(Boolean);
         const slug = pathParts[pathParts.length - 1] || urlObj.pathname.replace(/\//g, '') || 'home';
 
-        // Fetch additional info from WordPress API if credentials provided
         let postInfo: Partial<PageInfo> | null = null;
         if (authHeader) {
           postInfo = await fetchWordPressPostInfo(normalizedUrl, url, authHeader, postType);
         }
 
-        // If WP API failed, fetch page content directly
         let pageAnalysis = { wordCount: 0, hasH1: false, hasH2: false, hasSchema: false };
         if (!postInfo?.wordCount) {
           pageAnalysis = await fetchPageContent(url);
@@ -455,18 +431,19 @@ serve(async (req) => {
           !!postInfo?.featuredImage
         );
 
-        pages.push({
-          id: crypto.randomUUID(),
+        pagesToInsert.push({
+          site_id: siteId || null,
           url: urlObj.pathname || '/',
           slug,
           title: postInfo?.title || slug.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
-          postId: postInfo?.postId,
-          postType,
-          wordCount,
+          word_count: wordCount,
+          status: 'pending',
+          score_before: score,
+          post_id: postInfo?.postId || null,
+          post_type: postType,
           categories: postInfo?.categories || [],
           tags: postInfo?.tags || [],
-          featuredImage: postInfo?.featuredImage,
-          scoreBefore: score,
+          featured_image: postInfo?.featuredImage || null,
         });
       } catch (e) {
         const errorMsg = `Failed to process URL: ${url}`;
@@ -475,13 +452,45 @@ serve(async (req) => {
       }
     }
 
-    console.log(`[Sitemap Crawler] Successfully processed ${pages.length} pages with ${errors.length} errors`);
+    // Batch insert pages into database
+    let pagesAdded = 0;
+    if (pagesToInsert.length > 0) {
+      const { data: insertedPages, error: insertError } = await supabase
+        .from('pages')
+        .insert(pagesToInsert)
+        .select();
+
+      if (insertError) {
+        console.error('[Sitemap Crawler] Database insert error:', insertError);
+        errors.push(`Database error: ${insertError.message}`);
+      } else {
+        pagesAdded = insertedPages?.length || 0;
+        console.log(`[Sitemap Crawler] Inserted ${pagesAdded} pages into database`);
+      }
+    }
+
+    // Log activity
+    if (siteId) {
+      await supabase.from('activity_log').insert({
+        site_id: siteId,
+        type: 'success',
+        message: `Crawled sitemap: ${pagesAdded} pages added`,
+        details: { 
+          sitemapUrl, 
+          totalFound: allUrls.length, 
+          pagesAdded,
+          errors: errors.length,
+        },
+      });
+    }
+
+    console.log(`[Sitemap Crawler] Successfully processed ${pagesAdded} pages with ${errors.length} errors`);
 
     return new Response(
       JSON.stringify({
         success: true,
-        message: `Successfully crawled ${pages.length} pages from sitemap`,
-        pages,
+        message: `Successfully crawled sitemap and added ${pagesAdded} pages to queue`,
+        pagesAdded,
         totalFound: allUrls.length,
         errors,
       } as CrawlResponse),
@@ -495,7 +504,7 @@ serve(async (req) => {
       JSON.stringify({
         success: false,
         message: 'Sitemap crawl failed',
-        pages: [],
+        pagesAdded: 0,
         totalFound: 0,
         errors: [error instanceof Error ? error.message : 'Unknown error occurred'],
       } as CrawlResponse),

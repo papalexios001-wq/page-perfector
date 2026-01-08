@@ -1,28 +1,23 @@
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { supabase } from '@/integrations/supabase/client';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-
-// Create client only if credentials are available
-export const supabase: SupabaseClient | null = 
-  supabaseUrl && supabaseAnonKey 
-    ? createClient(supabaseUrl, supabaseAnonKey) 
-    : null;
+// Re-export the supabase client
+export { supabase };
 
 // Check if Supabase is configured
 export const isSupabaseConfigured = (): boolean => {
-  return Boolean(supabaseUrl && supabaseAnonKey);
+  return Boolean(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY);
 };
 
-// Get edge function URL - works even without full Supabase client
+// Get edge function URL
 export const getEdgeFunctionUrl = (functionName: string): string => {
-  if (!supabaseUrl) {
+  const url = import.meta.env.VITE_SUPABASE_URL;
+  if (!url) {
     throw new Error('Backend runtime not configured. Please connect Lovable Cloud first.');
   }
-  return `${supabaseUrl}/functions/v1/${functionName}`;
+  return `${url}/functions/v1/${functionName}`;
 };
 
-// Enterprise-grade edge function invocation using supabase.functions.invoke
+// Enterprise-grade edge function invocation
 export interface EdgeFunctionResult<T = unknown> {
   data: T | null;
   error: EdgeFunctionError | null;
@@ -38,7 +33,7 @@ export async function invokeEdgeFunction<T = unknown>(
   functionName: string,
   body: Record<string, unknown>
 ): Promise<EdgeFunctionResult<T>> {
-  if (!supabase) {
+  if (!isSupabaseConfigured()) {
     return {
       data: null,
       error: {

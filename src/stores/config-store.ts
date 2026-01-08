@@ -6,6 +6,7 @@ export type BrandVoice = 'professional' | 'casual' | 'technical' | 'friendly' | 
 export type OptimizationMode = 'surgical' | 'full_rewrite';
 
 interface WordPressConfig {
+  siteId?: string;
   siteUrl: string;
   username: string;
   applicationPassword: string;
@@ -73,6 +74,7 @@ export const useConfigStore = create<ConfigState>()(
   persist(
     (set, get) => ({
       wordpress: {
+        siteId: undefined,
         siteUrl: '',
         username: '',
         applicationPassword: '',
@@ -129,18 +131,9 @@ export const useConfigStore = create<ConfigState>()(
         set((state) => ({ advanced: { ...state.advanced, ...settings } })),
 
       testConnection: async () => {
-        const { wordpress } = get();
-        // Simulate connection test
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        const success = wordpress.siteUrl && wordpress.username && wordpress.applicationPassword;
-        set((state) => ({
-          wordpress: {
-            ...state.wordpress,
-            isConnected: !!success,
-            lastConnectedAt: success ? new Date().toISOString() : undefined,
-          }
-        }));
-        return !!success;
+        // This method is deprecated - use the WordPressConnection component
+        // which calls the validate-wordpress edge function directly
+        return false;
       },
     }),
     {

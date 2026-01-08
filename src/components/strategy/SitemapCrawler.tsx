@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
-import { usePagesStore, PageRecord } from '@/stores/pages-store';
+import { usePagesStore } from '@/stores/pages-store';
 import { useConfigStore } from '@/stores/config-store';
 import { invokeEdgeFunction, isSupabaseConfigured } from '@/lib/supabase';
 import { toast } from 'sonner';
@@ -16,13 +16,13 @@ import { cn } from '@/lib/utils';
 interface CrawlResult {
   success: boolean;
   message: string;
-  pages: any[];
+  pagesAdded: number;
   totalFound: number;
   errors: string[];
 }
 
 export function SitemapCrawler() {
-  const { addPages, clearPages, addActivityLog } = usePagesStore();
+  const { addActivityLog } = usePagesStore();
   const { wordpress } = useConfigStore();
   const [sitemapUrl, setSitemapUrl] = useState('/sitemap.xml');
   const [postType, setPostType] = useState('post');
@@ -69,6 +69,7 @@ export function SitemapCrawler() {
     });
 
     const { data, error } = await invokeEdgeFunction<CrawlResult>('crawl-sitemap', {
+      siteId: wordpress.siteId,
       siteUrl: wordpress.siteUrl,
       sitemapPath: sitemapUrl,
       username: wordpress.username,
@@ -84,7 +85,7 @@ export function SitemapCrawler() {
       setCrawlResult({
         success: false,
         message: error.message,
-        pages: [],
+        pagesAdded: 0,
         totalFound: 0,
         errors: [error.message],
       });
@@ -105,40 +106,21 @@ export function SitemapCrawler() {
     const result = data!;
     setCrawlResult(result);
 
-    if (result.success && result.pages.length > 0) {
-      // Convert API response to PageRecord format
-      const pageRecords: PageRecord[] = result.pages.map((page) => ({
-        id: page.id,
-        url: page.url,
-        slug: page.slug,
-        title: page.title,
-        wordCount: page.wordCount || 0,
-        status: 'pending' as const,
-        scoreBefore: page.scoreBefore,
-        postId: page.postId,
-        postType: page.postType || postType,
-        categories: page.categories || [],
-        tags: page.tags || [],
-        featuredImage: page.featuredImage,
-        retryCount: 0,
-      }));
-
-      // Clear existing and add new pages
-      clearPages();
-      addPages(pageRecords);
-
+    if (result.success && result.pagesAdded > 0) {
+      // Pages are now saved directly to database by the edge function
+      // We need to refresh the local store from database
       addActivityLog({
         type: 'success',
         pageUrl: sitemapUrl,
-        message: `Successfully crawled ${result.pages.length} pages from sitemap`,
-        details: { totalFound: result.totalFound, processed: result.pages.length },
+        message: `Successfully added ${result.pagesAdded} pages to queue`,
+        details: { totalFound: result.totalFound, pagesAdded: result.pagesAdded },
       });
 
-      toast.success(`Found ${result.pages.length} pages!`, {
+      toast.success(`Added ${result.pagesAdded} pages to queue!`, {
         description: `Total in sitemap: ${result.totalFound}`,
       });
-    } else if (result.success && result.pages.length === 0) {
-      toast.warning('No pages found', {
+    } else if (result.success && result.pagesAdded === 0) {
+      toast.warning('No pages added', {
         description: 'The sitemap was accessible but contained no matching URLs',
       });
     } else {
@@ -262,8 +244,8 @@ export function SitemapCrawler() {
             {crawlResult.success ? (
               <span className="flex items-center justify-center gap-1">
                 <CheckCircle2 className="w-4 h-4" />
-                Found: <span className="font-mono font-bold">{crawlResult.pages.length}</span> pages
-                {crawlResult.totalFound > crawlResult.pages.length && (
+                Added: <span className="font-mono font-bold">{crawlResult.pagesAdded}</span> pages
+                {crawlResult.totalFound > crawlResult.pagesAdded && (
                   <span className="text-muted-foreground">
                     (of {crawlResult.totalFound})
                   </span>
