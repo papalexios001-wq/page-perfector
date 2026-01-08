@@ -211,23 +211,51 @@ Generate comprehensive SEO optimization recommendations.`;
 
     console.log(`[Optimize] Calling AI for optimization...`);
 
-    // Call Lovable AI Gateway
-    const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${lovableApiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
-        messages: [
-          { role: 'system', content: OPTIMIZATION_PROMPT },
-          { role: 'user', content: userPrompt },
-        ],
-        temperature: 0.7,
-        max_tokens: 2000,
-      }),
-    });
+    // Call Lovable AI Gateway with 45 second timeout
+    const aiController = new AbortController();
+    const aiTimeoutId = setTimeout(() => aiController.abort(), 45000);
+
+    let aiResponse: Response;
+    try {
+      aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${lovableApiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'google/gemini-2.5-flash',
+          messages: [
+            { role: 'system', content: OPTIMIZATION_PROMPT },
+            { role: 'user', content: userPrompt },
+          ],
+          temperature: 0.7,
+          max_tokens: 4000, // Increased for full content generation
+        }),
+        signal: aiController.signal,
+      });
+      clearTimeout(aiTimeoutId);
+    } catch (aiErr) {
+      clearTimeout(aiTimeoutId);
+      if (aiErr instanceof Error && aiErr.name === 'AbortError') {
+        console.error('[Optimize] AI request timeout after 45 seconds');
+        await supabase.from('pages').update({ status: 'failed' }).eq('id', pageId);
+        await supabase.from('activity_log').insert({
+          page_id: pageId,
+          type: 'error',
+          message: 'AI request timeout after 45 seconds. Try again or use simpler content.',
+        });
+        return new Response(
+          JSON.stringify({
+            success: false,
+            message: 'AI timeout',
+            error: 'AI request timed out after 45 seconds. The content may be too complex. Try again.',
+          }),
+          { status: 504, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      throw aiErr;
+    }
 
     if (!aiResponse.ok) {
       const errorText = await aiResponse.text();

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   List, Search, Filter, Zap, Eye, Trash2, RotateCcw, FileText, 
@@ -18,6 +18,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { StatusBadge } from '@/components/shared/StatusBadge';
 import { ScoreIndicator } from '@/components/shared/ScoreIndicator';
+import { OptimizationProgress, DEFAULT_STEPS, OptimizationStep } from './OptimizationProgress';
 import { supabase } from '@/integrations/supabase/client';
 import { invokeEdgeFunction } from '@/lib/supabase';
 import { useConfigStore } from '@/stores/config-store';
@@ -99,6 +100,12 @@ export function PageQueue() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
   
+  // Progress bar state
+  const [optimizationSteps, setOptimizationSteps] = useState<OptimizationStep[]>(DEFAULT_STEPS);
+  const [currentStepIndex, setCurrentStepIndex] = useState(0);
+  const [optimizingPageTitle, setOptimizingPageTitle] = useState<string>('');
+  const abortControllerRef = useRef<AbortController | null>(null);
+  
   // Dialog states
   const [showResultDialog, setShowResultDialog] = useState(false);
   const [showValidationDialog, setShowValidationDialog] = useState(false);
@@ -147,28 +154,55 @@ export function PageQueue() {
     }
   };
 
-  const optimizeSinglePage = useCallback(async (pageId: string): Promise<{ success: boolean; optimization?: OptimizationResult }> => {
+  const optimizeSinglePage = useCallback(async (
+    pageId: string,
+    onStepChange?: (step: number) => void
+  ): Promise<{ success: boolean; optimization?: OptimizationResult; error?: string }> => {
     if (!wordpress.siteUrl || !wordpress.username || !wordpress.applicationPassword) {
-      return { success: false };
+      return { success: false, error: 'WordPress not configured' };
     }
+
+    // Create abort controller for this request
+    abortControllerRef.current = new AbortController();
+
+    // Update step: Fetching content (step 1)
+    onStepChange?.(1);
 
     const { data, error } = await invokeEdgeFunction<{
       success: boolean;
       message: string;
       optimization?: OptimizationResult;
+      error?: string;
     }>('optimize-content', {
       pageId,
       siteUrl: wordpress.siteUrl,
       username: wordpress.username,
       applicationPassword: wordpress.applicationPassword,
+    }, {
+      signal: abortControllerRef.current.signal,
+      timeoutMs: 90000, // 90 second timeout
     });
 
     if (error) {
       console.error(`[Optimize] Error for ${pageId}:`, error);
-      return { success: false };
+      
+      // Handle timeout specifically
+      if (error.code === 'TIMEOUT_ERROR') {
+        // Reset the page status to failed
+        await supabase.from('pages').update({ status: 'failed' }).eq('id', pageId);
+      }
+      
+      return { success: false, error: error.message };
     }
 
-    return { success: data?.success || false, optimization: data?.optimization };
+    // Update step: Saving results (step 4)
+    onStepChange?.(4);
+
+    return { 
+      success: data?.success || false, 
+      optimization: data?.optimization,
+      error: data?.error 
+    };
   }, [wordpress]);
 
   const validateOptimization = async (optimization: OptimizationResult): Promise<ValidationResult | null> => {
@@ -334,18 +368,35 @@ export function PageQueue() {
     }
   };
 
+  const handleOptimizationTimeout = useCallback(async () => {
+    // Abort the current request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    
+    setIsOptimizing(false);
+    setCurrentStepIndex(0);
+    setOptimizingPageTitle('');
+    
+    toast.error('Optimization timed out', {
+      description: 'The request took too long (>90 seconds). Please try again.',
+    });
+    
+    await fetchPages();
+  }, []);
+
   const handleOptimizeSingle = async (pageId: string) => {
     // Validate WordPress connection first
-    toast.loading('Validating WordPress connection...');
+    setCurrentStepIndex(0);
+    setOptimizationSteps(prev => prev.map((s, i) => ({ ...s, status: i === 0 ? 'active' : 'pending' })));
+    
     const wpValidation = await validateWordPressConnection();
     if (!wpValidation.valid) {
-      toast.dismiss();
       toast.error('WordPress Connection Failed', {
         description: wpValidation.error,
       });
       return;
     }
-    toast.dismiss();
 
     // Find the page before starting
     const pageToOptimize = pages.find(p => p.id === pageId);
@@ -354,16 +405,45 @@ export function PageQueue() {
       return;
     }
 
+    // Start the progress UI
+    setIsOptimizing(true);
+    setOptimizingPageTitle(pageToOptimize.title || pageToOptimize.slug || 'Unknown page');
+    setCurrentStepIndex(0);
+    
     setPages(prev => prev.map(p => p.id === pageId ? { ...p, status: 'optimizing' } : p));
-    toast.info('Starting optimization...', { description: pageToOptimize.title || pageToOptimize.url });
 
-    const { success, optimization } = await optimizeSinglePage(pageId);
+    // Step progress callback
+    const handleStepChange = (step: number) => {
+      setCurrentStepIndex(step);
+      setOptimizationSteps(prev => prev.map((s, i) => ({
+        ...s,
+        status: i < step ? 'completed' : i === step ? 'active' : 'pending'
+      })));
+    };
+
+    // Start with step 0 (validating)
+    handleStepChange(0);
+    
+    // Simulate step progression for AI analysis (step 2)
+    setTimeout(() => handleStepChange(2), 3000);
+    
+    // Simulate step progression for generating (step 3)
+    setTimeout(() => handleStepChange(3), 15000);
+
+    const { success, optimization, error } = await optimizeSinglePage(pageId, handleStepChange);
+    
+    // Complete the progress
+    setIsOptimizing(false);
+    setCurrentStepIndex(0);
+    setOptimizingPageTitle('');
     
     // Fetch fresh pages data
     await fetchPages();
 
     if (success && optimization) {
-      // Use the stored page reference, update with fresh data
+      // Mark all steps as completed
+      setOptimizationSteps(prev => prev.map(s => ({ ...s, status: 'completed' })));
+      
       setSelectedPageResult({ 
         page: { ...pageToOptimize, status: 'completed' }, 
         result: optimization 
@@ -374,7 +454,7 @@ export function PageQueue() {
       });
     } else {
       toast.error('Optimization failed', {
-        description: 'Check the console for details.',
+        description: error || 'Check the console for details.',
       });
     }
   };
@@ -1084,6 +1164,16 @@ export function PageQueue() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Enterprise-grade Optimization Progress Bar */}
+      <OptimizationProgress
+        isActive={isOptimizing}
+        currentStep={currentStepIndex}
+        steps={optimizationSteps}
+        pageTitle={optimizingPageTitle}
+        onTimeout={handleOptimizationTimeout}
+        timeoutMs={90000}
+      />
     </>
   );
 }
