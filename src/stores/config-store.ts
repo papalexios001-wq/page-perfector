@@ -103,8 +103,8 @@ export const useConfigStore = create<ConfigState>()(
       },
       advanced: {
         targetScore: 85,
-        minWordCount: 1500,
-        maxWordCount: 4000,
+        minWordCount: 2000,
+        maxWordCount: 3000,
         enableFaqs: true,
         enableSchema: true,
         enableInternalLinks: true,

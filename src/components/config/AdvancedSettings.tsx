@@ -75,7 +75,7 @@ export function AdvancedSettings() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {[500, 1000, 1500, 2000, 2500].map((count) => (
+                      {[500, 750, 1000, 1250, 1500, 1750, 2000, 2500, 3000, 3500, 4000, 4500, 5000].map((count) => (
                         <SelectItem key={count} value={count.toString()}>
                           {count.toLocaleString()} words
                         </SelectItem>
@@ -94,7 +94,7 @@ export function AdvancedSettings() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {[2000, 3000, 4000, 5000, 6000].map((count) => (
+                      {[750, 1000, 1500, 2000, 2500, 3000, 3500, 4000, 4500, 5000, 5500, 6000].map((count) => (
                         <SelectItem key={count} value={count.toString()}>
                           {count.toLocaleString()} words
                         </SelectItem>
