@@ -1,12 +1,21 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { List, Search, Filter, Zap, Eye, Trash2, RotateCcw, FileText, ChevronLeft, ChevronRight, RefreshCw, Loader2, CheckCircle2, XCircle } from 'lucide-react';
+import { 
+  List, Search, Filter, Zap, Eye, Trash2, RotateCcw, FileText, 
+  ChevronLeft, ChevronRight, RefreshCw, Loader2, CheckCircle2, 
+  XCircle, Upload, Send, AlertTriangle, Info, CheckCheck
+} from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+import { Badge } from '@/components/ui/badge';
+import { Progress } from '@/components/ui/progress';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Separator } from '@/components/ui/separator';
 import { StatusBadge } from '@/components/shared/StatusBadge';
 import { ScoreIndicator } from '@/components/shared/ScoreIndicator';
 import { supabase } from '@/integrations/supabase/client';
@@ -35,10 +44,48 @@ interface DBPage {
   updated_at: string | null;
 }
 
-interface OptimizationProgress {
-  pageId: string;
-  status: 'pending' | 'running' | 'success' | 'error';
-  message?: string;
+interface OptimizationResult {
+  optimizedTitle: string;
+  metaDescription: string;
+  h1: string;
+  h2s: string[];
+  contentStrategy: {
+    wordCount: number;
+    readabilityScore: number;
+    keywordDensity: number;
+    lsiKeywords: string[];
+  };
+  internalLinks: Array<{ anchor: string; target: string; position: number }>;
+  schema: Record<string, unknown>;
+  aiSuggestions: {
+    contentGaps: string;
+    quickWins: string;
+    improvements: string[];
+  };
+  qualityScore: number;
+  estimatedRankPosition: number;
+  confidenceLevel: number;
+}
+
+interface ValidationCheck {
+  name: string;
+  passed: boolean;
+  actual: string | number;
+  expected: string;
+  severity: 'error' | 'warning' | 'info';
+}
+
+interface ValidationResult {
+  success: boolean;
+  canPublish: boolean;
+  overallScore: number;
+  checks: ValidationCheck[];
+  summary: { errors: number; warnings: number; passed: number };
+}
+
+interface JobResult {
+  page_id: string;
+  result: OptimizationResult | null;
 }
 
 export function PageQueue() {
@@ -46,12 +93,20 @@ export function PageQueue() {
   const [selectedPages, setSelectedPages] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isOptimizing, setIsOptimizing] = useState(false);
-  const [optimizationProgress, setOptimizationProgress] = useState<OptimizationProgress[]>([]);
+  const [isPublishing, setIsPublishing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
   
-  const { wordpress } = useConfigStore();
+  // Dialog states
+  const [showResultDialog, setShowResultDialog] = useState(false);
+  const [showValidationDialog, setShowValidationDialog] = useState(false);
+  const [showPublishDialog, setShowPublishDialog] = useState(false);
+  const [selectedPageResult, setSelectedPageResult] = useState<{ page: DBPage; result: OptimizationResult | null } | null>(null);
+  const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
+  const [publishProgress, setPublishProgress] = useState<{ current: number; total: number; status: string }>({ current: 0, total: 0, status: '' });
+  
+  const { wordpress, optimization: optimizationSettings } = useConfigStore();
 
   const fetchPages = async () => {
     setIsLoading(true);
@@ -91,15 +146,15 @@ export function PageQueue() {
     }
   };
 
-  const optimizeSinglePage = useCallback(async (pageId: string): Promise<boolean> => {
+  const optimizeSinglePage = useCallback(async (pageId: string): Promise<{ success: boolean; optimization?: OptimizationResult }> => {
     if (!wordpress.siteUrl || !wordpress.username || !wordpress.applicationPassword) {
-      return false;
+      return { success: false };
     }
 
     const { data, error } = await invokeEdgeFunction<{
       success: boolean;
       message: string;
-      optimization?: Record<string, unknown>;
+      optimization?: OptimizationResult;
     }>('optimize-content', {
       pageId,
       siteUrl: wordpress.siteUrl,
@@ -109,11 +164,70 @@ export function PageQueue() {
 
     if (error) {
       console.error(`[Optimize] Error for ${pageId}:`, error);
+      return { success: false };
+    }
+
+    return { success: data?.success || false, optimization: data?.optimization };
+  }, [wordpress]);
+
+  const validateOptimization = async (optimization: OptimizationResult): Promise<ValidationResult | null> => {
+    const { data, error } = await invokeEdgeFunction<ValidationResult>('validate-content', {
+      optimization,
+      minQualityScore: 75,
+    });
+
+    if (error) {
+      console.error('[Validate] Error:', error);
+      return null;
+    }
+
+    return data;
+  };
+
+  const publishToWordPress = async (
+    pageId: string, 
+    optimization: OptimizationResult,
+    publishStatus: 'draft' | 'publish' = 'draft'
+  ): Promise<boolean> => {
+    if (!wordpress.siteUrl || !wordpress.username || !wordpress.applicationPassword) {
+      return false;
+    }
+
+    const { data, error } = await invokeEdgeFunction<{
+      success: boolean;
+      message: string;
+      postUrl?: string;
+    }>('publish-to-wordpress', {
+      pageId,
+      siteUrl: wordpress.siteUrl,
+      username: wordpress.username,
+      applicationPassword: wordpress.applicationPassword,
+      publishStatus,
+      optimization: {
+        optimizedTitle: optimization.optimizedTitle,
+        metaDescription: optimization.metaDescription,
+        h1: optimization.h1,
+        h2s: optimization.h2s,
+        schema: optimization.schema,
+        internalLinks: optimization.internalLinks,
+      },
+      options: {
+        preserveCategories: optimizationSettings.preserveCategories,
+        preserveTags: optimizationSettings.preserveTags,
+        preserveSlug: optimizationSettings.preserveSlug,
+        preserveFeaturedImage: optimizationSettings.preserveFeaturedImage,
+        updateYoast: true,
+        updateRankMath: true,
+      },
+    });
+
+    if (error) {
+      console.error(`[Publish] Error for ${pageId}:`, error);
       return false;
     }
 
     return data?.success || false;
-  }, [wordpress]);
+  };
 
   const handleOptimizeSelected = async () => {
     if (selectedPages.length === 0) {
@@ -129,52 +243,30 @@ export function PageQueue() {
     }
 
     setIsOptimizing(true);
-    const initialProgress = selectedPages.map(id => ({ pageId: id, status: 'pending' as const }));
-    setOptimizationProgress(initialProgress);
-
     toast.info(`Starting optimization for ${selectedPages.length} pages...`);
 
     let successCount = 0;
     let errorCount = 0;
 
-    // Process pages sequentially to avoid rate limits
     for (const pageId of selectedPages) {
-      // Update progress to running
-      setOptimizationProgress(prev => 
-        prev.map(p => p.pageId === pageId ? { ...p, status: 'running' } : p)
-      );
+      setPages(prev => prev.map(p => p.id === pageId ? { ...p, status: 'optimizing' } : p));
 
-      // Update page status in local state
-      setPages(prev => 
-        prev.map(p => p.id === pageId ? { ...p, status: 'optimizing' } : p)
-      );
-
-      const success = await optimizeSinglePage(pageId);
+      const { success } = await optimizeSinglePage(pageId);
 
       if (success) {
         successCount++;
-        setOptimizationProgress(prev => 
-          prev.map(p => p.pageId === pageId ? { ...p, status: 'success', message: 'Optimized' } : p)
-        );
       } else {
         errorCount++;
-        setOptimizationProgress(prev => 
-          prev.map(p => p.pageId === pageId ? { ...p, status: 'error', message: 'Failed' } : p)
-        );
       }
 
-      // Small delay between requests to be nice to the API
       if (selectedPages.indexOf(pageId) < selectedPages.length - 1) {
         await new Promise(r => setTimeout(r, 500));
       }
     }
 
-    // Refresh pages from database to get updated statuses
     await fetchPages();
-
     setIsOptimizing(false);
     setSelectedPages([]);
-    setOptimizationProgress([]);
 
     if (successCount > 0 && errorCount === 0) {
       toast.success(`Successfully optimized ${successCount} pages!`);
@@ -194,14 +286,130 @@ export function PageQueue() {
     setPages(prev => prev.map(p => p.id === pageId ? { ...p, status: 'optimizing' } : p));
     toast.info('Starting optimization...');
 
-    const success = await optimizeSinglePage(pageId);
-    
+    const { success, optimization } = await optimizeSinglePage(pageId);
     await fetchPages();
 
-    if (success) {
+    if (success && optimization) {
+      const page = pages.find(p => p.id === pageId);
+      if (page) {
+        setSelectedPageResult({ page, result: optimization });
+        setShowResultDialog(true);
+      }
       toast.success('Page optimized successfully!');
     } else {
       toast.error('Optimization failed');
+    }
+  };
+
+  const handleViewResult = async (page: DBPage) => {
+    // Fetch the job result from the database
+    const { data: jobData } = await supabase
+      .from('jobs')
+      .select('result')
+      .eq('page_id', page.id)
+      .eq('status', 'completed')
+      .order('completed_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    const result = jobData?.result as unknown as OptimizationResult | null;
+    setSelectedPageResult({ page, result });
+    setShowResultDialog(true);
+  };
+
+  const handleValidateAndPublish = async () => {
+    if (!selectedPageResult?.result) return;
+
+    const validation = await validateOptimization(selectedPageResult.result);
+    setValidationResult(validation);
+    setShowValidationDialog(true);
+  };
+
+  const handlePublishSingle = async (publishStatus: 'draft' | 'publish') => {
+    if (!selectedPageResult?.result) return;
+
+    setIsPublishing(true);
+    const success = await publishToWordPress(
+      selectedPageResult.page.id,
+      selectedPageResult.result,
+      publishStatus
+    );
+    setIsPublishing(false);
+
+    if (success) {
+      toast.success(`Published as ${publishStatus}!`);
+      setShowValidationDialog(false);
+      setShowResultDialog(false);
+      await fetchPages();
+    } else {
+      toast.error('Publish failed');
+    }
+  };
+
+  const handlePublishSelected = async (publishStatus: 'draft' | 'publish') => {
+    const completedPages = pages.filter(
+      p => selectedPages.includes(p.id) && p.status === 'completed'
+    );
+
+    if (completedPages.length === 0) {
+      toast.error('No completed pages selected', {
+        description: 'Only optimized pages can be published.',
+      });
+      return;
+    }
+
+    setShowPublishDialog(true);
+    setIsPublishing(true);
+    setPublishProgress({ current: 0, total: completedPages.length, status: 'Starting...' });
+
+    let successCount = 0;
+    let errorCount = 0;
+
+    for (let i = 0; i < completedPages.length; i++) {
+      const page = completedPages[i];
+      setPublishProgress({ 
+        current: i + 1, 
+        total: completedPages.length, 
+        status: `Publishing: ${page.slug || page.title}` 
+      });
+
+      // Get the optimization result for this page
+      const { data: jobData } = await supabase
+        .from('jobs')
+        .select('result')
+        .eq('page_id', page.id)
+        .eq('status', 'completed')
+        .order('completed_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      const optimization = jobData?.result as unknown as OptimizationResult | null;
+      
+      if (optimization) {
+        const success = await publishToWordPress(page.id, optimization, publishStatus);
+        if (success) {
+          successCount++;
+        } else {
+          errorCount++;
+        }
+      } else {
+        errorCount++;
+      }
+
+      await new Promise(r => setTimeout(r, 300));
+    }
+
+    setIsPublishing(false);
+    setShowPublishDialog(false);
+    setSelectedPages([]);
+    await fetchPages();
+
+    if (successCount > 0 && errorCount === 0) {
+      toast.success(`Published ${successCount} pages as ${publishStatus}!`);
+    } else if (successCount > 0) {
+      toast.warning(`Published ${successCount} pages, ${errorCount} failed`);
+    } else {
+      toast.error('All publishes failed');
     }
   };
 
@@ -239,247 +447,525 @@ export function PageQueue() {
 
   const visibleIds = paginatedPages.map(p => p.id);
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedPages.includes(id));
+  
+  const selectedCompletedCount = pages.filter(
+    p => selectedPages.includes(p.id) && p.status === 'completed'
+  ).length;
 
   return (
-    <Card className="glass-panel border-border/50">
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <CardTitle className="text-base flex items-center gap-2">
-            <List className="w-4 h-4 text-primary" />
-            Page Queue
-            <span className="text-muted-foreground font-normal text-sm">
-              ({pages.length} pages)
-            </span>
-          </CardTitle>
-          <div className="flex items-center gap-2 flex-wrap">
-            {selectedPages.length > 0 && (
+    <>
+      <Card className="glass-panel border-border/50">
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <List className="w-4 h-4 text-primary" />
+              Page Queue
+              <span className="text-muted-foreground font-normal text-sm">
+                ({pages.length} pages)
+              </span>
+            </CardTitle>
+            <div className="flex items-center gap-2 flex-wrap">
+              {selectedPages.length > 0 && (
+                <>
+                  <Button
+                    size="sm"
+                    className="h-8 gap-1"
+                    onClick={handleOptimizeSelected}
+                    disabled={isOptimizing || isPublishing}
+                  >
+                    {isOptimizing ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Zap className="w-3.5 h-3.5" />
+                    )}
+                    {isOptimizing ? 'Optimizing...' : `Optimize ${selectedPages.length}`}
+                  </Button>
+                  {selectedCompletedCount > 0 && (
+                    <div className="flex gap-1">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        className="h-8 gap-1"
+                        onClick={() => handlePublishSelected('draft')}
+                        disabled={isOptimizing || isPublishing}
+                      >
+                        <Upload className="w-3.5 h-3.5" />
+                        Save as Draft ({selectedCompletedCount})
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="default"
+                        className="h-8 gap-1 bg-green-600 hover:bg-green-700"
+                        onClick={() => handlePublishSelected('publish')}
+                        disabled={isOptimizing || isPublishing}
+                      >
+                        <Send className="w-3.5 h-3.5" />
+                        Publish ({selectedCompletedCount})
+                      </Button>
+                    </div>
+                  )}
+                </>
+              )}
               <Button
-                size="sm"
-                className="h-8 gap-1"
-                onClick={handleOptimizeSelected}
-                disabled={isOptimizing}
+                variant="outline"
+                size="icon"
+                className="h-8 w-8"
+                onClick={fetchPages}
+                disabled={isLoading}
               >
-                {isOptimizing ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <Zap className="w-3.5 h-3.5" />
-                )}
-                {isOptimizing ? 'Optimizing...' : `Optimize ${selectedPages.length} Selected`}
+                <RefreshCw className={cn("w-4 h-4", isLoading && "animate-spin")} />
+              </Button>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search..."
+                  value={searchQuery}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                  className="pl-9 w-48 h-8 bg-muted/50"
+                />
+              </div>
+              <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setCurrentPage(1); }}>
+                <SelectTrigger className="w-32 h-8 bg-muted/50">
+                  <Filter className="w-3 h-3 mr-2" />
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All</SelectItem>
+                  <SelectItem value="pending">Pending</SelectItem>
+                  <SelectItem value="optimizing">Optimizing</SelectItem>
+                  <SelectItem value="completed">Completed</SelectItem>
+                  <SelectItem value="published">Published</SelectItem>
+                  <SelectItem value="failed">Failed</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : pages.length === 0 ? (
+            <div className="text-center py-12 text-muted-foreground">
+              <List className="w-12 h-12 mx-auto mb-3 opacity-50" />
+              <p>No pages in queue</p>
+              <p className="text-sm">Crawl a sitemap to add pages</p>
+            </div>
+          ) : (
+            <>
+              <div className="rounded-lg border border-border/50 overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent border-border/50">
+                      <TableHead className="w-12">
+                        <Checkbox
+                          checked={allVisibleSelected}
+                          onCheckedChange={selectAllVisible}
+                        />
+                      </TableHead>
+                      <TableHead>URL</TableHead>
+                      <TableHead className="w-20 text-center">Score</TableHead>
+                      <TableHead className="w-28">Status</TableHead>
+                      <TableHead className="w-32 text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    <AnimatePresence mode="popLayout">
+                      {paginatedPages.map((page) => (
+                        <motion.tr
+                          key={page.id}
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, x: -10 }}
+                          className="border-border/50 hover:bg-muted/30 transition-colors"
+                        >
+                          <TableCell>
+                            <Checkbox
+                              checked={selectedPages.includes(page.id)}
+                              onCheckedChange={() => togglePageSelection(page.id)}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex flex-col">
+                              <span className="font-medium truncate max-w-[300px]">{page.slug || page.url}</span>
+                              <span className="text-xs text-muted-foreground truncate max-w-[300px]">
+                                {page.title}
+                              </span>
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-center">
+                            <ScoreIndicator score={getScore(page)} size="sm" />
+                          </TableCell>
+                          <TableCell>
+                            <StatusBadge status={page.status as any || 'pending'} />
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center justify-end gap-1">
+                              {(page.status === 'pending' || !page.status) && (
+                                <Button 
+                                  variant="ghost" 
+                                  size="icon" 
+                                  className="h-7 w-7" 
+                                  title="Quick Optimize"
+                                  onClick={() => handleOptimizeSingle(page.id)}
+                                  disabled={isOptimizing}
+                                >
+                                  <Zap className="w-3.5 h-3.5" />
+                                </Button>
+                              )}
+                              {page.status === 'optimizing' && (
+                                <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                              )}
+                              {page.status === 'failed' && (
+                                <Button 
+                                  variant="ghost" 
+                                  size="icon" 
+                                  className="h-7 w-7" 
+                                  title="Retry"
+                                  onClick={() => handleOptimizeSingle(page.id)}
+                                  disabled={isOptimizing}
+                                >
+                                  <RotateCcw className="w-3.5 h-3.5" />
+                                </Button>
+                              )}
+                              {(page.status === 'completed' || page.status === 'published') && (
+                                <>
+                                  <Button 
+                                    variant="ghost" 
+                                    size="icon" 
+                                    className="h-7 w-7" 
+                                    title="View Results & Publish"
+                                    onClick={() => handleViewResult(page)}
+                                  >
+                                    <FileText className="w-3.5 h-3.5" />
+                                  </Button>
+                                  {page.status === 'completed' && (
+                                    <Button 
+                                      variant="ghost" 
+                                      size="icon" 
+                                      className="h-7 w-7 text-green-500 hover:text-green-600" 
+                                      title="Quick Publish"
+                                      onClick={async () => {
+                                        const { data: jobData } = await supabase
+                                          .from('jobs')
+                                          .select('result')
+                                          .eq('page_id', page.id)
+                                          .eq('status', 'completed')
+                                          .order('completed_at', { ascending: false })
+                                          .limit(1)
+                                          .single();
+                                        
+                                        if (jobData?.result) {
+                                          setSelectedPageResult({ page, result: jobData.result as unknown as OptimizationResult });
+                                          handleValidateAndPublish();
+                                        }
+                                      }}
+                                    >
+                                      <Send className="w-3.5 h-3.5" />
+                                    </Button>
+                                  )}
+                                </>
+                              )}
+                              {page.status === 'published' && (
+                                <CheckCheck className="w-4 h-4 text-green-500" />
+                              )}
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7"
+                                title="Preview"
+                                onClick={() => window.open(page.url, '_blank')}
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 text-destructive hover:text-destructive"
+                                onClick={() => handleDelete(page.id)}
+                                title="Delete"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </motion.tr>
+                      ))}
+                    </AnimatePresence>
+                  </TableBody>
+                </Table>
+              </div>
+
+              {/* Pagination */}
+              <div className="flex items-center justify-between mt-4">
+                <span className="text-sm text-muted-foreground">
+                  Showing {paginatedPages.length} of {filteredPages.length}
+                  {selectedPages.length > 0 && ` • ${selectedPages.length} selected`}
+                </span>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8"
+                    disabled={currentPage === 1}
+                    onClick={() => setCurrentPage(currentPage - 1)}
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </Button>
+                  <div className="flex items-center gap-1">
+                    {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {
+                      let pageNum: number;
+                      if (totalPages <= 5) {
+                        pageNum = i + 1;
+                      } else if (currentPage <= 3) {
+                        pageNum = i + 1;
+                      } else if (currentPage >= totalPages - 2) {
+                        pageNum = totalPages - 4 + i;
+                      } else {
+                        pageNum = currentPage - 2 + i;
+                      }
+                      return (
+                        <Button
+                          key={pageNum}
+                          variant={currentPage === pageNum ? 'default' : 'ghost'}
+                          size="icon"
+                          className="h-8 w-8"
+                          onClick={() => setCurrentPage(pageNum)}
+                        >
+                          {pageNum}
+                        </Button>
+                      );
+                    })}
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8"
+                    disabled={currentPage === totalPages || totalPages === 0}
+                    onClick={() => setCurrentPage(currentPage + 1)}
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </Button>
+                </div>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Optimization Result Dialog */}
+      <Dialog open={showResultDialog} onOpenChange={setShowResultDialog}>
+        <DialogContent className="max-w-2xl max-h-[80vh]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileText className="w-5 h-5 text-primary" />
+              Optimization Results
+            </DialogTitle>
+            <DialogDescription>
+              {selectedPageResult?.page.title}
+            </DialogDescription>
+          </DialogHeader>
+          
+          <ScrollArea className="max-h-[50vh] pr-4">
+            {selectedPageResult?.result ? (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="p-3 rounded-lg bg-muted/50">
+                    <p className="text-xs text-muted-foreground mb-1">Quality Score</p>
+                    <p className="text-2xl font-bold text-primary">{selectedPageResult.result.qualityScore}</p>
+                  </div>
+                  <div className="p-3 rounded-lg bg-muted/50">
+                    <p className="text-xs text-muted-foreground mb-1">Estimated Rank</p>
+                    <p className="text-2xl font-bold">#{selectedPageResult.result.estimatedRankPosition}</p>
+                  </div>
+                </div>
+
+                <Separator />
+
+                <div>
+                  <p className="text-sm font-medium mb-2">Optimized Title</p>
+                  <p className="text-sm p-2 rounded bg-muted/50">{selectedPageResult.result.optimizedTitle}</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {selectedPageResult.result.optimizedTitle.length} characters
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-sm font-medium mb-2">Meta Description</p>
+                  <p className="text-sm p-2 rounded bg-muted/50">{selectedPageResult.result.metaDescription}</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {selectedPageResult.result.metaDescription.length} characters
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-sm font-medium mb-2">H1 Heading</p>
+                  <p className="text-sm p-2 rounded bg-muted/50">{selectedPageResult.result.h1}</p>
+                </div>
+
+                <div>
+                  <p className="text-sm font-medium mb-2">Subheadings (H2)</p>
+                  <ul className="space-y-1">
+                    {selectedPageResult.result.h2s.map((h2, i) => (
+                      <li key={i} className="text-sm p-2 rounded bg-muted/50">• {h2}</li>
+                    ))}
+                  </ul>
+                </div>
+
+                <div>
+                  <p className="text-sm font-medium mb-2">LSI Keywords</p>
+                  <div className="flex flex-wrap gap-1">
+                    {selectedPageResult.result.contentStrategy.lsiKeywords.map((kw, i) => (
+                      <Badge key={i} variant="secondary">{kw}</Badge>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-sm font-medium mb-2">AI Suggestions</p>
+                  <div className="space-y-2 text-sm">
+                    <p className="p-2 rounded bg-muted/50">
+                      <strong>Quick Wins:</strong> {selectedPageResult.result.aiSuggestions.quickWins}
+                    </p>
+                    <p className="p-2 rounded bg-muted/50">
+                      <strong>Content Gaps:</strong> {selectedPageResult.result.aiSuggestions.contentGaps}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <p className="text-muted-foreground text-center py-8">No optimization data available</p>
+            )}
+          </ScrollArea>
+
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setShowResultDialog(false)}>
+              Close
+            </Button>
+            {selectedPageResult?.result && selectedPageResult.page.status !== 'published' && (
+              <Button onClick={handleValidateAndPublish} disabled={isPublishing}>
+                {isPublishing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Send className="w-4 h-4 mr-2" />}
+                Validate & Publish
               </Button>
             )}
-            <Button
-              variant="outline"
-              size="icon"
-              className="h-8 w-8"
-              onClick={fetchPages}
-              disabled={isLoading}
-            >
-              <RefreshCw className={cn("w-4 h-4", isLoading && "animate-spin")} />
-            </Button>
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input
-                placeholder="Search..."
-                value={searchQuery}
-                onChange={(e) => {
-                  setSearchQuery(e.target.value);
-                  setCurrentPage(1);
-                }}
-                className="pl-9 w-48 h-8 bg-muted/50"
-              />
-            </div>
-            <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setCurrentPage(1); }}>
-              <SelectTrigger className="w-32 h-8 bg-muted/50">
-                <Filter className="w-3 h-3 mr-2" />
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All</SelectItem>
-                <SelectItem value="pending">Pending</SelectItem>
-                <SelectItem value="analyzing">Analyzing</SelectItem>
-                <SelectItem value="optimizing">Optimizing</SelectItem>
-                <SelectItem value="completed">Completed</SelectItem>
-                <SelectItem value="failed">Failed</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent>
-        {isLoading ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-          </div>
-        ) : pages.length === 0 ? (
-          <div className="text-center py-12 text-muted-foreground">
-            <List className="w-12 h-12 mx-auto mb-3 opacity-50" />
-            <p>No pages in queue</p>
-            <p className="text-sm">Crawl a sitemap to add pages</p>
-          </div>
-        ) : (
-          <>
-            <div className="rounded-lg border border-border/50 overflow-hidden">
-              <Table>
-                <TableHeader>
-                  <TableRow className="hover:bg-transparent border-border/50">
-                    <TableHead className="w-12">
-                      <Checkbox
-                        checked={allVisibleSelected}
-                        onCheckedChange={selectAllVisible}
-                      />
-                    </TableHead>
-                    <TableHead>URL</TableHead>
-                    <TableHead className="w-20 text-center">Score</TableHead>
-                    <TableHead className="w-28">Status</TableHead>
-                    <TableHead className="w-28 text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  <AnimatePresence mode="popLayout">
-                    {paginatedPages.map((page) => (
-                      <motion.tr
-                        key={page.id}
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, x: -10 }}
-                        className="border-border/50 hover:bg-muted/30 transition-colors"
-                      >
-                        <TableCell>
-                          <Checkbox
-                            checked={selectedPages.includes(page.id)}
-                            onCheckedChange={() => togglePageSelection(page.id)}
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex flex-col">
-                            <span className="font-medium truncate max-w-[300px]">{page.slug || page.url}</span>
-                            <span className="text-xs text-muted-foreground truncate max-w-[300px]">
-                              {page.title}
-                            </span>
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-center">
-                          <ScoreIndicator score={getScore(page)} size="sm" />
-                        </TableCell>
-                        <TableCell>
-                          <StatusBadge status={page.status as any || 'pending'} />
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center justify-end gap-1">
-                            {(page.status === 'pending' || !page.status) && (
-                              <Button 
-                                variant="ghost" 
-                                size="icon" 
-                                className="h-7 w-7" 
-                                title="Quick Optimize"
-                                onClick={() => handleOptimizeSingle(page.id)}
-                                disabled={isOptimizing}
-                              >
-                                <Zap className="w-3.5 h-3.5" />
-                              </Button>
-                            )}
-                            {page.status === 'optimizing' && (
-                              <Loader2 className="w-4 h-4 animate-spin text-primary" />
-                            )}
-                            {page.status === 'failed' && (
-                              <Button 
-                                variant="ghost" 
-                                size="icon" 
-                                className="h-7 w-7" 
-                                title="Retry"
-                                onClick={() => handleOptimizeSingle(page.id)}
-                                disabled={isOptimizing}
-                              >
-                                <RotateCcw className="w-3.5 h-3.5" />
-                              </Button>
-                            )}
-                            {page.status === 'completed' && (
-                              <Button variant="ghost" size="icon" className="h-7 w-7" title="View Result">
-                                <FileText className="w-3.5 h-3.5" />
-                              </Button>
-                            )}
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7"
-                              title="Preview"
-                              onClick={() => window.open(page.url, '_blank')}
-                            >
-                              <Eye className="w-3.5 h-3.5" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7 text-destructive hover:text-destructive"
-                              onClick={() => handleDelete(page.id)}
-                              title="Delete"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </motion.tr>
-                    ))}
-                  </AnimatePresence>
-                </TableBody>
-              </Table>
-            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-            {/* Pagination */}
-            <div className="flex items-center justify-between mt-4">
-              <span className="text-sm text-muted-foreground">
-                Showing {paginatedPages.length} of {filteredPages.length}
-                {selectedPages.length > 0 && ` • ${selectedPages.length} selected`}
-              </span>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-8 w-8"
-                  disabled={currentPage === 1}
-                  onClick={() => setCurrentPage(currentPage - 1)}
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                </Button>
-                <div className="flex items-center gap-1">
-                  {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {
-                    let pageNum: number;
-                    if (totalPages <= 5) {
-                      pageNum = i + 1;
-                    } else if (currentPage <= 3) {
-                      pageNum = i + 1;
-                    } else if (currentPage >= totalPages - 2) {
-                      pageNum = totalPages - 4 + i;
-                    } else {
-                      pageNum = currentPage - 2 + i;
-                    }
-                    return (
-                      <Button
-                        key={pageNum}
-                        variant={currentPage === pageNum ? 'default' : 'ghost'}
-                        size="icon"
-                        className="h-8 w-8"
-                        onClick={() => setCurrentPage(pageNum)}
-                      >
-                        {pageNum}
-                      </Button>
-                    );
-                  })}
-                </div>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-8 w-8"
-                  disabled={currentPage === totalPages || totalPages === 0}
-                  onClick={() => setCurrentPage(currentPage + 1)}
-                >
-                  <ChevronRight className="w-4 h-4" />
-                </Button>
+      {/* Validation Dialog */}
+      <Dialog open={showValidationDialog} onOpenChange={setShowValidationDialog}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {validationResult?.canPublish ? (
+                <CheckCircle2 className="w-5 h-5 text-green-500" />
+              ) : (
+                <AlertTriangle className="w-5 h-5 text-yellow-500" />
+              )}
+              Content Validation
+            </DialogTitle>
+            <DialogDescription>
+              Pre-publish quality checks
+            </DialogDescription>
+          </DialogHeader>
+
+          {validationResult && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+                <span className="text-sm font-medium">Overall Score</span>
+                <span className="text-lg font-bold">{validationResult.overallScore}%</span>
               </div>
+
+              <div className="flex gap-2">
+                <Badge variant="destructive" className="gap-1">
+                  <XCircle className="w-3 h-3" /> {validationResult.summary.errors} Errors
+                </Badge>
+                <Badge variant="secondary" className="gap-1 bg-yellow-500/10 text-yellow-600">
+                  <AlertTriangle className="w-3 h-3" /> {validationResult.summary.warnings} Warnings
+                </Badge>
+                <Badge variant="secondary" className="gap-1 bg-green-500/10 text-green-600">
+                  <CheckCircle2 className="w-3 h-3" /> {validationResult.summary.passed} Passed
+                </Badge>
+              </div>
+
+              <ScrollArea className="max-h-[300px]">
+                <div className="space-y-2">
+                  {validationResult.checks.map((check, i) => (
+                    <div 
+                      key={i} 
+                      className={cn(
+                        "p-2 rounded-lg text-sm flex items-center justify-between",
+                        check.passed ? "bg-green-500/10" : 
+                          check.severity === 'error' ? "bg-red-500/10" : "bg-yellow-500/10"
+                      )}
+                    >
+                      <div className="flex items-center gap-2">
+                        {check.passed ? (
+                          <CheckCircle2 className="w-4 h-4 text-green-500" />
+                        ) : check.severity === 'error' ? (
+                          <XCircle className="w-4 h-4 text-red-500" />
+                        ) : (
+                          <AlertTriangle className="w-4 h-4 text-yellow-500" />
+                        )}
+                        <span>{check.name}</span>
+                      </div>
+                      <span className="text-muted-foreground">
+                        {check.actual} <span className="text-xs">({check.expected})</span>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </ScrollArea>
             </div>
-          </>
-        )}
-      </CardContent>
-    </Card>
+          )}
+
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setShowValidationDialog(false)}>
+              Cancel
+            </Button>
+            <Button 
+              variant="secondary"
+              onClick={() => handlePublishSingle('draft')}
+              disabled={isPublishing}
+            >
+              {isPublishing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Upload className="w-4 h-4 mr-2" />}
+              Save as Draft
+            </Button>
+            <Button 
+              onClick={() => handlePublishSingle('publish')}
+              disabled={isPublishing || !validationResult?.canPublish}
+              className="bg-green-600 hover:bg-green-700"
+            >
+              {isPublishing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Send className="w-4 h-4 mr-2" />}
+              Publish
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk Publish Progress Dialog */}
+      <Dialog open={showPublishDialog} onOpenChange={() => {}}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Upload className="w-5 h-5 text-primary animate-pulse" />
+              Publishing to WordPress
+            </DialogTitle>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-4">
+            <Progress value={(publishProgress.current / publishProgress.total) * 100} />
+            <p className="text-sm text-center text-muted-foreground">
+              {publishProgress.current} of {publishProgress.total} pages
+            </p>
+            <p className="text-sm text-center truncate">{publishProgress.status}</p>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

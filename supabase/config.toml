@@ -29,3 +29,9 @@ verify_jwt = false
 
 [functions.optimize-content]
 verify_jwt = false
+
+[functions.publish-to-wordpress]
+verify_jwt = false
+
+[functions.validate-content]
+verify_jwt = false
