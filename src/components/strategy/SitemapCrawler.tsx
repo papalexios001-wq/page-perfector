@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Map, Loader2, Filter, Download } from 'lucide-react';
+import { Map, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -8,53 +8,137 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { usePagesStore, PageRecord } from '@/stores/pages-store';
+import { useConfigStore } from '@/stores/config-store';
+import { getEdgeFunctionUrl } from '@/lib/supabase';
+import { toast } from 'sonner';
+import { cn } from '@/lib/utils';
+
+interface CrawlResult {
+  success: boolean;
+  message: string;
+  pages: any[];
+  totalFound: number;
+  errors: string[];
+}
 
 export function SitemapCrawler() {
-  const { addPages } = usePagesStore();
+  const { addPages, clearPages, addActivityLog } = usePagesStore();
+  const { wordpress } = useConfigStore();
   const [sitemapUrl, setSitemapUrl] = useState('/sitemap.xml');
   const [postType, setPostType] = useState('post');
   const [maxPages, setMaxPages] = useState('100');
   const [excludeOptimized, setExcludeOptimized] = useState(false);
   const [lowScoreOnly, setLowScoreOnly] = useState(false);
   const [isCrawling, setIsCrawling] = useState(false);
-  const [foundCount, setFoundCount] = useState<number | null>(null);
+  const [crawlResult, setCrawlResult] = useState<CrawlResult | null>(null);
 
   const handleCrawl = async () => {
-    setIsCrawling(true);
-    
-    // Simulate crawling
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
-    // Generate mock pages
-    const mockPages: PageRecord[] = Array.from({ length: Math.min(parseInt(maxPages), 15) }, (_, i) => ({
-      id: Math.random().toString(36).substring(2, 15),
-      url: `/article-${i + 1}`,
-      slug: `article-${i + 1}`,
-      title: `Sample Article ${i + 1}`,
-      wordCount: Math.floor(Math.random() * 2000) + 500,
-      status: 'pending' as const,
-      scoreBefore: {
-        overall: Math.floor(Math.random() * 60) + 20,
-        components: {
-          contentDepth: Math.floor(Math.random() * 100),
-          readability: Math.floor(Math.random() * 100),
-          structure: Math.floor(Math.random() * 100),
-          seoOnPage: Math.floor(Math.random() * 100),
-          internalLinks: Math.floor(Math.random() * 100),
-          schemaMarkup: Math.floor(Math.random() * 100),
-          engagement: Math.floor(Math.random() * 100),
-          eeat: Math.floor(Math.random() * 100),
-        },
-      },
-      postType,
-      categories: ['General'],
-      tags: [],
-      retryCount: 0,
-    }));
+    if (!wordpress.siteUrl) {
+      toast.error('Please configure WordPress connection first', {
+        description: 'Go to Configuration tab and connect your WordPress site',
+      });
+      return;
+    }
 
-    addPages(mockPages);
-    setFoundCount(mockPages.length);
-    setIsCrawling(false);
+    setIsCrawling(true);
+    setCrawlResult(null);
+
+    try {
+      addActivityLog({
+        type: 'info',
+        pageUrl: sitemapUrl,
+        message: 'Starting sitemap crawl...',
+      });
+
+      const response = await fetch(getEdgeFunctionUrl('crawl-sitemap'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          siteUrl: wordpress.siteUrl,
+          sitemapPath: sitemapUrl,
+          username: wordpress.username,
+          applicationPassword: wordpress.applicationPassword,
+          postType,
+          maxPages: parseInt(maxPages),
+          excludeOptimized,
+          lowScoreOnly,
+        }),
+      });
+
+      const result: CrawlResult = await response.json();
+      setCrawlResult(result);
+
+      if (result.success && result.pages.length > 0) {
+        // Convert API response to PageRecord format
+        const pageRecords: PageRecord[] = result.pages.map((page) => ({
+          id: page.id,
+          url: page.url,
+          slug: page.slug,
+          title: page.title,
+          wordCount: page.wordCount || 0,
+          status: 'pending' as const,
+          scoreBefore: page.scoreBefore,
+          postId: page.postId,
+          postType: page.postType || postType,
+          categories: page.categories || [],
+          tags: page.tags || [],
+          featuredImage: page.featuredImage,
+          retryCount: 0,
+        }));
+
+        // Clear existing and add new pages
+        clearPages();
+        addPages(pageRecords);
+
+        addActivityLog({
+          type: 'success',
+          pageUrl: sitemapUrl,
+          message: `Successfully crawled ${result.pages.length} pages from sitemap`,
+          details: { totalFound: result.totalFound, processed: result.pages.length },
+        });
+
+        toast.success(`Found ${result.pages.length} pages!`, {
+          description: `Total in sitemap: ${result.totalFound}`,
+        });
+      } else if (result.success && result.pages.length === 0) {
+        toast.warning('No pages found', {
+          description: 'The sitemap was accessible but contained no matching URLs',
+        });
+      } else {
+        addActivityLog({
+          type: 'error',
+          pageUrl: sitemapUrl,
+          message: result.message || 'Failed to crawl sitemap',
+        });
+
+        toast.error('Crawl failed', {
+          description: result.message || 'Could not fetch sitemap',
+        });
+      }
+    } catch (error) {
+      console.error('Sitemap crawl error:', error);
+      setCrawlResult({
+        success: false,
+        message: error instanceof Error ? error.message : 'Network error',
+        pages: [],
+        totalFound: 0,
+        errors: [error instanceof Error ? error.message : 'Network error'],
+      });
+
+      addActivityLog({
+        type: 'error',
+        pageUrl: sitemapUrl,
+        message: 'Sitemap crawl failed - network error',
+      });
+
+      toast.error('Crawl failed', {
+        description: 'Network error - please check your connection',
+      });
+    } finally {
+      setIsCrawling(false);
+    }
   };
 
   return (
@@ -74,6 +158,12 @@ export function SitemapCrawler() {
             onChange={(e) => setSitemapUrl(e.target.value)}
             className="bg-muted/50"
           />
+          {!wordpress.isConnected && (
+            <p className="text-xs text-warning flex items-center gap-1">
+              <AlertCircle className="w-3 h-3" />
+              Connect WordPress first
+            </p>
+          )}
         </div>
 
         <div className="grid grid-cols-2 gap-2">
@@ -101,6 +191,7 @@ export function SitemapCrawler() {
                 <SelectItem value="50">50</SelectItem>
                 <SelectItem value="100">100</SelectItem>
                 <SelectItem value="200">200</SelectItem>
+                <SelectItem value="500">500</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -119,7 +210,7 @@ export function SitemapCrawler() {
 
         <Button
           onClick={handleCrawl}
-          disabled={isCrawling}
+          disabled={isCrawling || !wordpress.isConnected}
           className="w-full gap-2"
         >
           {isCrawling ? (
@@ -130,14 +221,34 @@ export function SitemapCrawler() {
           {isCrawling ? 'Crawling...' : 'Crawl Sitemap'}
         </Button>
 
-        {foundCount !== null && (
-          <motion.p
+        {crawlResult && (
+          <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="text-sm text-muted-foreground text-center"
+            className={cn(
+              'p-2 rounded-lg text-sm text-center',
+              crawlResult.success 
+                ? 'bg-success/10 text-success' 
+                : 'bg-destructive/10 text-destructive'
+            )}
           >
-            Found: <span className="text-primary font-mono">{foundCount}</span> pages
-          </motion.p>
+            {crawlResult.success ? (
+              <span className="flex items-center justify-center gap-1">
+                <CheckCircle2 className="w-4 h-4" />
+                Found: <span className="font-mono font-bold">{crawlResult.pages.length}</span> pages
+                {crawlResult.totalFound > crawlResult.pages.length && (
+                  <span className="text-muted-foreground">
+                    (of {crawlResult.totalFound})
+                  </span>
+                )}
+              </span>
+            ) : (
+              <span className="flex items-center justify-center gap-1">
+                <AlertCircle className="w-4 h-4" />
+                {crawlResult.message}
+              </span>
+            )}
+          </motion.div>
         )}
       </CardContent>
     </Card>
