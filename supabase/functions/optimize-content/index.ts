@@ -275,6 +275,38 @@ Generate comprehensive SEO optimization recommendations.`;
       throw new Error('Failed to parse AI optimization response');
     }
 
+    // FIX #3: Validate all required fields exist
+    const requiredFields = [
+      'optimizedTitle',
+      'metaDescription',
+      'h1',
+      'h2s',
+      'optimizedContent',
+      'contentStrategy',
+      'schema',
+      'qualityScore'
+    ];
+
+    for (const field of requiredFields) {
+      if (!optimization[field]) {
+        console.error(`[Optimize] AI response missing field: ${field}`);
+        throw new Error(
+          `AI response missing critical field: ${field}. Optimization is incomplete.`
+        );
+      }
+    }
+
+    // Validate optimizedContent is not too short
+    if (!optimization.optimizedContent || optimization.optimizedContent.trim().length < 100) {
+      console.error(`[Optimize] optimizedContent too short: ${optimization.optimizedContent?.length || 0} chars`);
+      throw new Error(
+        `optimizedContent too short (${optimization.optimizedContent?.length || 0} chars). ` +
+        `AI failed to generate full HTML content.`
+      );
+    }
+
+    console.log(`[Optimize] Validated response: ${optimization.optimizedContent.length} chars content`);
+
     // Create job record
     const { data: job, error: jobError } = await supabase
       .from('jobs')

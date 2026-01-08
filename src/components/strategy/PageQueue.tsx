@@ -237,20 +237,68 @@ export function PageQueue() {
     return { success: true, postUrl: data.postUrl };
   };
 
+  // FIX #4: WordPress connection validation before operations
+  const validateWordPressConnection = useCallback(async (): Promise<{ valid: boolean; error?: string }> => {
+    const { siteUrl, username, applicationPassword } = wordpress;
+    
+    if (!siteUrl || !username || !applicationPassword) {
+      return { valid: false, error: 'WordPress credentials missing. Go to Configuration tab.' };
+    }
+
+    try {
+      let normalizedUrl = siteUrl.trim();
+      if (!normalizedUrl.startsWith('http://') && !normalizedUrl.startsWith('https://')) {
+        normalizedUrl = 'https://' + normalizedUrl;
+      }
+      normalizedUrl = normalizedUrl.replace(/\/+$/, '');
+
+      const credentials = `${username}:${applicationPassword}`;
+      const authHeader = 'Basic ' + btoa(credentials);
+
+      const response = await fetch(`${normalizedUrl}/wp-json/wp/v2/posts?per_page=1`, {
+        headers: {
+          'Authorization': authHeader,
+          'User-Agent': 'WP-Perfector/1.0',
+        },
+      });
+
+      if (response.status === 401) {
+        return { valid: false, error: 'Invalid WordPress credentials' };
+      }
+      if (response.status === 403) {
+        return { valid: false, error: 'User lacks permissions (edit_posts required)' };
+      }
+      if (!response.ok) {
+        return { valid: false, error: `WordPress API error: ${response.status}` };
+      }
+
+      return { valid: true };
+    } catch (err) {
+      return { 
+        valid: false, 
+        error: `Cannot connect to WordPress: ${err instanceof Error ? err.message : 'Unknown error'}`
+      };
+    }
+  }, [wordpress]);
+
   const handleOptimizeSelected = async () => {
     if (selectedPages.length === 0) {
       toast.error('Please select pages to optimize');
       return;
     }
 
-    // Check WordPress config exists (credentials stored from sitemap crawl)
-    if (!wordpress.siteUrl || !wordpress.username || !wordpress.applicationPassword) {
-      toast.error('WordPress not configured', {
-        description: 'Go to Configuration tab and connect your WordPress site first.',
+    // Validate WordPress connection first
+    toast.loading('Validating WordPress connection...');
+    const wpValidation = await validateWordPressConnection();
+    if (!wpValidation.valid) {
+      toast.dismiss();
+      toast.error('WordPress Connection Failed', {
+        description: wpValidation.error,
       });
       return;
     }
-
+    toast.dismiss();
+    
     setIsOptimizing(true);
     toast.info(`Starting optimization for ${selectedPages.length} pages...`);
 
@@ -287,13 +335,17 @@ export function PageQueue() {
   };
 
   const handleOptimizeSingle = async (pageId: string) => {
-    // Check WordPress config exists (credentials stored from sitemap crawl)
-    if (!wordpress.siteUrl || !wordpress.username || !wordpress.applicationPassword) {
-      toast.error('WordPress not configured', {
-        description: 'Go to Configuration tab and connect your WordPress site first.',
+    // Validate WordPress connection first
+    toast.loading('Validating WordPress connection...');
+    const wpValidation = await validateWordPressConnection();
+    if (!wpValidation.valid) {
+      toast.dismiss();
+      toast.error('WordPress Connection Failed', {
+        description: wpValidation.error,
       });
       return;
     }
+    toast.dismiss();
 
     // Find the page before starting
     const pageToOptimize = pages.find(p => p.id === pageId);
@@ -328,17 +380,31 @@ export function PageQueue() {
   };
 
   const handleViewResult = async (page: DBPage) => {
-    // Fetch the job result from the database
-    const { data: jobData } = await supabase
+    // FIX #2: Better error handling - don't use .single() which throws on no rows
+    const { data: jobData, error: jobError } = await supabase
       .from('jobs')
       .select('result')
       .eq('page_id', page.id)
       .eq('status', 'completed')
       .order('completed_at', { ascending: false })
-      .limit(1)
-      .single();
+      .limit(1);
 
-    const result = jobData?.result as unknown as OptimizationResult | null;
+    if (jobError) {
+      console.error('[ViewResult] Database error:', jobError);
+      toast.error('Failed to load optimization result');
+      return;
+    }
+
+    const result = jobData && jobData.length > 0 
+      ? (jobData[0].result as unknown as OptimizationResult | null)
+      : null;
+      
+    if (!result) {
+      toast.warning('No optimization result found', {
+        description: 'Run optimization first before viewing results.',
+      });
+    }
+    
     setSelectedPageResult({ page, result });
     setShowResultDialog(true);
   };
@@ -403,19 +469,39 @@ export function PageQueue() {
         status: `Publishing: ${page.slug || page.title}` 
       });
 
-      // Get the optimization result for this page
-      const { data: jobData } = await supabase
-        .from('jobs')
-        .select('result')
-        .eq('page_id', page.id)
-        .eq('status', 'completed')
-        .order('completed_at', { ascending: false })
-        .limit(1)
-        .single();
+      // FIX #2: Get the optimization result with proper error handling
+      try {
+        const { data: jobData, error: jobError } = await supabase
+          .from('jobs')
+          .select('result')
+          .eq('page_id', page.id)
+          .eq('status', 'completed')
+          .order('completed_at', { ascending: false })
+          .limit(1);
 
-      const optimization = jobData?.result as unknown as OptimizationResult | null;
-      
-      if (optimization) {
+        if (jobError) {
+          console.error(`[Publish] Database error for ${page.slug}:`, jobError);
+          errorCount++;
+          continue;
+        }
+
+        if (!jobData || jobData.length === 0) {
+          console.error(
+            `[Publish] No optimization result for ${page.slug}. ` +
+            `Run optimization first before publishing.`
+          );
+          errorCount++;
+          continue;
+        }
+
+        const optimization = jobData[0]?.result as unknown as OptimizationResult | null;
+
+        if (!optimization) {
+          console.error(`[Publish] Optimization result is null/empty for ${page.slug}`);
+          errorCount++;
+          continue;
+        }
+
         const result = await publishToWordPress(page.id, optimization, publishStatus);
         if (result.success) {
           successCount++;
@@ -423,9 +509,9 @@ export function PageQueue() {
           errorCount++;
           console.error(`[Publish] Failed for ${page.slug}:`, result.error);
         }
-      } else {
+      } catch (err) {
+        console.error(`[Publish] Unexpected error for ${page.slug}:`, err);
         errorCount++;
-        console.error(`[Publish] No optimization result for ${page.slug}`);
       }
 
       await new Promise(r => setTimeout(r, 300));

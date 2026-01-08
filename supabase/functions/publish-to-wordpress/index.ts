@@ -91,8 +91,83 @@ serve(async (req) => {
       throw new Error('Page not found in database');
     }
 
-    if (!pageData.post_id) {
-      throw new Error('No WordPress post_id associated with this page. The page may not have been crawled correctly.');
+    // FIX #1: If post_id is missing, try to find it by URL slug
+    let postId = pageData.post_id;
+
+    if (!postId) {
+      console.log(`[Publish] No post_id found, searching by slug: ${pageData.slug}`);
+      
+      // Normalize URL first
+      let normalizedUrl = siteUrl.trim();
+      if (!normalizedUrl.startsWith('http://') && !normalizedUrl.startsWith('https://')) {
+        normalizedUrl = 'https://' + normalizedUrl;
+      }
+      normalizedUrl = normalizedUrl.replace(/\/+$/, '');
+
+      const credentials = `${username}:${applicationPassword}`;
+      const authHeader = 'Basic ' + btoa(credentials);
+
+      const slug = pageData.slug || pageData.url.split('/').filter(Boolean).pop() || '';
+      
+      // Try posts endpoint first
+      const searchResponse = await fetch(
+        `${normalizedUrl}/wp-json/wp/v2/posts?slug=${encodeURIComponent(slug)}&context=edit&per_page=100`,
+        {
+          headers: {
+            'Accept': 'application/json',
+            'Authorization': authHeader,
+            'User-Agent': 'WP-Perfector/1.0',
+          },
+        }
+      );
+
+      if (searchResponse.ok) {
+        const posts = await searchResponse.json();
+        if (Array.isArray(posts) && posts.length > 0) {
+          postId = posts[0].id;
+          console.log(`[Publish] Found post via slug: ${postId}`);
+          
+          // Update page with post_id for future use
+          await supabase
+            .from('pages')
+            .update({ post_id: postId })
+            .eq('id', pageId);
+        }
+      }
+
+      // If still not found, try pages endpoint
+      if (!postId) {
+        const pagesResponse = await fetch(
+          `${normalizedUrl}/wp-json/wp/v2/pages?slug=${encodeURIComponent(slug)}&context=edit&per_page=100`,
+          {
+            headers: {
+              'Accept': 'application/json',
+              'Authorization': authHeader,
+              'User-Agent': 'WP-Perfector/1.0',
+            },
+          }
+        );
+
+        if (pagesResponse.ok) {
+          const wpPages = await pagesResponse.json();
+          if (Array.isArray(wpPages) && wpPages.length > 0) {
+            postId = wpPages[0].id;
+            console.log(`[Publish] Found page via slug: ${postId}`);
+            
+            await supabase
+              .from('pages')
+              .update({ post_id: postId })
+              .eq('id', pageId);
+          }
+        }
+      }
+    }
+
+    if (!postId) {
+      throw new Error(
+        `Cannot find WordPress post for slug "${pageData.slug}". ` +
+        `The page may not exist in WordPress. Re-crawl your sitemap with valid content.`
+      );
     }
 
     // Normalize URL
@@ -108,9 +183,9 @@ serve(async (req) => {
     console.log(`[Publish] Using Basic Auth for user: ${username}`);
 
     // First, verify the post exists in WordPress
-    console.log(`[Publish] Verifying post exists: ${pageData.post_id}`);
+    console.log(`[Publish] Verifying post exists: ${postId}`);
     const currentPostResponse = await fetch(
-      `${normalizedUrl}/wp-json/wp/v2/posts/${pageData.post_id}?context=edit`,
+      `${normalizedUrl}/wp-json/wp/v2/posts/${postId}?context=edit`,
       {
         headers: {
           'Accept': 'application/json',
@@ -122,7 +197,25 @@ serve(async (req) => {
 
     // Handle specific HTTP status codes for better error messages
     if (currentPostResponse.status === 404) {
-      throw new Error(`Post ${pageData.post_id} doesn't exist in WordPress. It may have been deleted.`);
+      // Try pages endpoint if post not found
+      console.log(`[Publish] Post ${postId} not found, trying pages endpoint...`);
+      const pageResponse = await fetch(
+        `${normalizedUrl}/wp-json/wp/v2/pages/${postId}?context=edit`,
+        {
+          headers: {
+            'Accept': 'application/json',
+            'Authorization': authHeader,
+            'User-Agent': 'WP-Optimizer-Pro/1.0',
+          },
+        }
+      );
+      
+      if (!pageResponse.ok) {
+        throw new Error(`Post/Page ${postId} doesn't exist in WordPress. It may have been deleted.`);
+      }
+      
+      // Use page endpoint for update
+      console.log(`[Publish] Found as WordPress page, using pages endpoint`);
     }
     
     if (currentPostResponse.status === 401) {
@@ -143,7 +236,7 @@ serve(async (req) => {
     
     // Verify post is not trashed
     if (currentPost.status === 'trash') {
-      throw new Error(`Post ${pageData.post_id} is in trash. Restore it in WordPress before publishing.`);
+      throw new Error(`Post ${postId} is in trash. Restore it in WordPress before publishing.`);
     }
     
     console.log(`[Publish] Post verified. Current status: ${currentPost.status}`);
@@ -229,11 +322,14 @@ serve(async (req) => {
       updatePayload.meta = metaPayload;
     }
 
-    console.log(`[Publish] Updating post ${pageData.post_id} with status: ${publishStatus}`);
+    console.log(`[Publish] Updating post ${postId} with status: ${publishStatus}`);
 
-    // Update the WordPress post
+    // Update the WordPress post (try posts first, then pages)
+    let updateEndpoint = `${normalizedUrl}/wp-json/wp/v2/posts/${postId}`;
+    
+    // Check if this is a page by trying the posts endpoint first
     const updateResponse = await fetch(
-      `${normalizedUrl}/wp-json/wp/v2/posts/${pageData.post_id}`,
+      updateEndpoint,
       {
         method: 'POST',
         headers: {
