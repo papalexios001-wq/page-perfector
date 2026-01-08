@@ -114,7 +114,7 @@ export function PageQueue() {
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
   const [publishProgress, setPublishProgress] = useState<{ current: number; total: number; status: string }>({ current: 0, total: 0, status: '' });
   
-  const { wordpress, optimization: optimizationSettings } = useConfigStore();
+  const { wordpress, ai, optimization: optimizationSettings } = useConfigStore();
 
   const fetchPages = async () => {
     setIsLoading(true);
@@ -168,6 +168,13 @@ export function PageQueue() {
     // Update step: Fetching content (step 1)
     onStepChange?.(1);
 
+    // Build AI configuration from user settings
+    const aiConfigPayload = ai.apiKey && ai.model && ai.provider ? {
+      provider: ai.provider,
+      apiKey: ai.apiKey,
+      model: ai.model,
+    } : undefined;
+
     const { data, error } = await invokeEdgeFunction<{
       success: boolean;
       message: string;
@@ -178,6 +185,7 @@ export function PageQueue() {
       siteUrl: wordpress.siteUrl,
       username: wordpress.username,
       applicationPassword: wordpress.applicationPassword,
+      aiConfig: aiConfigPayload, // Pass user's AI configuration
     }, {
       signal: abortControllerRef.current.signal,
       timeoutMs: 90000, // 90 second timeout

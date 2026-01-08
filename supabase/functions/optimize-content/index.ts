@@ -12,6 +12,14 @@ import {
   validateRequired,
 } from "../_shared/utils.ts";
 
+type AIProvider = 'google' | 'openai' | 'anthropic' | 'groq' | 'openrouter';
+
+interface AIConfig {
+  provider: AIProvider;
+  apiKey: string;
+  model: string;
+}
+
 interface OptimizeRequest {
   pageId: string;
   siteUrl: string;
@@ -20,6 +28,7 @@ interface OptimizeRequest {
   targetKeyword?: string;
   language?: string;
   region?: string;
+  aiConfig?: AIConfig; // User's AI configuration
 }
 
 interface OptimizationResult {
@@ -128,12 +137,17 @@ serve(async (req) => {
   try {
     const body: OptimizeRequest = await req.json();
     pageId = body.pageId;
-    const { siteUrl, username, applicationPassword, targetKeyword, language, region } = body;
+    const { siteUrl, username, applicationPassword, targetKeyword, language, region, aiConfig } = body;
 
     // Validate required fields
     validateRequired(body as unknown as Record<string, unknown>, ['pageId', 'siteUrl', 'username', 'applicationPassword']);
 
-    logger.info('Starting optimization', { pageId, siteUrl });
+    logger.info('Starting optimization', { 
+      pageId, 
+      siteUrl, 
+      aiProvider: aiConfig?.provider || 'lovable-default',
+      aiModel: aiConfig?.model || 'google/gemini-2.5-flash'
+    });
 
     // Rate limiting: 10 optimizations per minute per site
     const rateLimitKey = `optimize:${siteUrl}`;
@@ -147,9 +161,17 @@ serve(async (req) => {
       );
     }
 
-    if (!lovableApiKey) {
-      throw new AppError('LOVABLE_API_KEY is not configured. Please enable Lovable AI.', 'AI_NOT_CONFIGURED', 500);
+    // Determine AI configuration - prefer user's config, fallback to Lovable AI
+    const useUserAI = aiConfig?.provider && aiConfig?.apiKey && aiConfig?.model;
+    
+    if (!useUserAI && !lovableApiKey) {
+      throw new AppError('No AI provider configured. Please configure an AI provider or enable Lovable AI.', 'AI_NOT_CONFIGURED', 500);
     }
+
+    logger.info('Using AI provider', { 
+      provider: useUserAI ? aiConfig!.provider : 'lovable',
+      model: useUserAI ? aiConfig!.model : 'google/gemini-2.5-flash'
+    });
 
     // Idempotency check - use header key or generate from pageId + timestamp (10 second window)
     const idemKey = idempotencyKey || generateIdempotencyKey('optimize', pageId, Math.floor(Date.now() / 10000).toString());
@@ -239,28 +261,133 @@ Generate comprehensive SEO optimization recommendations.`;
 
         logger.info('Calling AI for optimization');
 
-        // Call Lovable AI Gateway with 45 second timeout and retry
+        // Build AI request based on provider
+        const buildAIRequest = (): { url: string; headers: HeadersInit; body: string } => {
+          const messages = [
+            { role: 'system', content: OPTIMIZATION_PROMPT },
+            { role: 'user', content: userPrompt },
+          ];
+
+          // If user has configured their own AI provider, use it
+          if (useUserAI && aiConfig) {
+            const { provider, apiKey, model } = aiConfig;
+
+            switch (provider) {
+              case 'google':
+                return {
+                  url: `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'x-goog-api-key': apiKey,
+                  },
+                  body: JSON.stringify({
+                    contents: [
+                      { role: 'user', parts: [{ text: OPTIMIZATION_PROMPT + '\n\n' + userPrompt }] }
+                    ],
+                    generationConfig: {
+                      temperature: 0.7,
+                      maxOutputTokens: 4000,
+                    },
+                  }),
+                };
+
+              case 'openai':
+                return {
+                  url: 'https://api.openai.com/v1/chat/completions',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${apiKey}`,
+                  },
+                  body: JSON.stringify({
+                    model,
+                    messages,
+                    temperature: 0.7,
+                    max_tokens: 4000,
+                  }),
+                };
+
+              case 'anthropic':
+                return {
+                  url: 'https://api.anthropic.com/v1/messages',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'x-api-key': apiKey,
+                    'anthropic-version': '2023-06-01',
+                  },
+                  body: JSON.stringify({
+                    model,
+                    system: OPTIMIZATION_PROMPT,
+                    messages: [{ role: 'user', content: userPrompt }],
+                    max_tokens: 4000,
+                  }),
+                };
+
+              case 'groq':
+                return {
+                  url: 'https://api.groq.com/openai/v1/chat/completions',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${apiKey}`,
+                  },
+                  body: JSON.stringify({
+                    model,
+                    messages,
+                    temperature: 0.7,
+                    max_tokens: 4000,
+                  }),
+                };
+
+              case 'openrouter':
+                return {
+                  url: 'https://openrouter.ai/api/v1/chat/completions',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${apiKey}`,
+                    'HTTP-Referer': 'https://wp-optimizer-pro.lovable.app',
+                    'X-Title': 'WP Optimizer Pro',
+                  },
+                  body: JSON.stringify({
+                    model,
+                    messages,
+                    temperature: 0.7,
+                    max_tokens: 4000,
+                  }),
+                };
+
+              default:
+                throw new AppError(`Unsupported AI provider: ${provider}`, 'INVALID_PROVIDER', 400);
+            }
+          }
+
+          // Default: Use Lovable AI Gateway
+          return {
+            url: 'https://ai.gateway.lovable.dev/v1/chat/completions',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${lovableApiKey}`,
+            },
+            body: JSON.stringify({
+              model: 'google/gemini-2.5-flash',
+              messages,
+              temperature: 0.7,
+              max_tokens: 4000,
+            }),
+          };
+        };
+
+        const aiRequest = buildAIRequest();
+
+        // Call AI with 45 second timeout and retry
         const aiController = new AbortController();
         const aiTimeoutId = setTimeout(() => aiController.abort(), 45000);
 
         let aiResponse: Response;
         try {
           aiResponse = await withRetry(
-            () => fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+            () => fetch(aiRequest.url, {
               method: 'POST',
-              headers: {
-                'Authorization': `Bearer ${lovableApiKey}`,
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                model: 'google/gemini-2.5-flash',
-                messages: [
-                  { role: 'system', content: OPTIMIZATION_PROMPT },
-                  { role: 'user', content: userPrompt },
-                ],
-                temperature: 0.7,
-                max_tokens: 4000,
-              }),
+              headers: aiRequest.headers,
+              body: aiRequest.body,
               signal: aiController.signal,
             }),
             {
@@ -306,9 +433,23 @@ Generate comprehensive SEO optimization recommendations.`;
         }
 
         const aiData = await aiResponse.json();
-        const aiContent = aiData.choices?.[0]?.message?.content;
+        
+        // Extract content based on provider response format
+        let aiContent: string | undefined;
+        
+        if (useUserAI && aiConfig?.provider === 'google') {
+          // Google Gemini API format
+          aiContent = aiData.candidates?.[0]?.content?.parts?.[0]?.text;
+        } else if (useUserAI && aiConfig?.provider === 'anthropic') {
+          // Anthropic Claude API format
+          aiContent = aiData.content?.[0]?.text;
+        } else {
+          // OpenAI-compatible format (OpenAI, Groq, OpenRouter, Lovable AI Gateway)
+          aiContent = aiData.choices?.[0]?.message?.content;
+        }
 
         if (!aiContent) {
+          logger.error('Empty AI response', { provider: aiConfig?.provider || 'lovable', responseKeys: Object.keys(aiData) });
           throw new AppError('No response from AI', 'AI_EMPTY_RESPONSE', 500);
         }
 
