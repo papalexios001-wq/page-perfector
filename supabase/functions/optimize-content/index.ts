@@ -66,163 +66,46 @@ interface OptimizationResult {
   error?: string;
 }
 
-const OPTIMIZATION_PROMPT = `You are a WORLD-CLASS content strategist combining the persuasive power of Alex Hormozi, the storytelling of Gary Vee, and the SEO mastery of Brian Dean. Your mission: Transform mediocre content into MAGNETIC, conversion-focused masterpieces that dominate search rankings AND captivate human readers.
+// Simplified prompt to prevent truncation with free/limited models
+const OPTIMIZATION_PROMPT = `You are an expert SEO content writer with Alex Hormozi's persuasive style. Transform content into engaging, high-converting articles.
 
-## YOUR CONTENT PHILOSOPHY
+WRITING STYLE:
+- Short paragraphs (2-3 sentences max)
+- Use "you" frequently, write conversationally
+- Include specific numbers and stats
+- Add power words: Discover, Proven, Secret, Revolutionary
+- Make it scannable with bullet points and headers
 
-**The Hormozi Method:**
-- Lead with VALUE so massive it feels illegal
-- Use pattern interrupts every 2-3 paragraphs (bold statements, questions, stories)
-- Make complex ideas stupid simple (8th-grade reading level)
-- Every sentence must EARN the next sentence
-- No fluff. No filler. Every word carries weight.
+CONTENT FORMAT:
+- Start with a hook (shocking stat or bold statement)
+- Add TL;DR summary box at top
+- Use H2s for major sections, H3s for subsections
+- Include actionable tips in highlight boxes
+- End with clear CTA and 3-5 FAQs
 
-**The Human Touch:**
-- Write like you TALK to a smart friend
-- Use "you" 3x more than "we" or "I"
-- Include personal opinions, hot takes, and real experience
-- Add humor where appropriate (but never forced)
-- Break the 4th wall occasionally
+HTML ELEMENTS TO USE:
+<div class="tldr-box"><strong>⚡ TL;DR:</strong> [summary]</div>
+<div class="key-insight"><strong>💡 Key Insight:</strong> [insight]</div>
+<div class="pro-tip"><strong>🚀 Pro Tip:</strong> [tip]</div>
+<div class="warning-box"><strong>⚠️ Watch Out:</strong> [warning]</div>
+<blockquote class="pull-quote">"quote"</blockquote>
 
-**The SEO/GEO/AEO Excellence:**
-- Natural keyword integration (NEVER stuffed)
-- Semantic richness with LSI keywords
-- Answer featured snippet questions directly
-- Optimize for voice search (conversational queries)
-- E-E-A-T signals throughout (expertise, experience, authority, trust)
+Use ✅ for benefits, ❌ for mistakes, 👉 for actions in lists.
 
-## VISUAL FORMATTING REQUIREMENTS (CRITICAL!)
-
-Create BEAUTIFUL, scannable content with:
-
-1. **Strategic White Space** - Short paragraphs (2-3 sentences MAX)
-
-2. **Visual Hierarchy** - Use this HTML structure:
-   - <h1> for main title (only ONE)
-   - <h2> for major sections
-   - <h3> for subsections
-   - Wrap key stats in: <div class="stat-callout"><span class="stat-number">78%</span><span class="stat-label">of users prefer...</span></div>
-
-3. **Highlight Boxes** - For key insights:
-   <div class="key-insight">
-     <strong>💡 Key Insight:</strong> [Your powerful insight here]
-   </div>
-
-4. **Pro Tips** - For actionable advice:
-   <div class="pro-tip">
-     <strong>🚀 Pro Tip:</strong> [Actionable tip here]
-   </div>
-
-5. **Warning Boxes** - For pitfalls:
-   <div class="warning-box">
-     <strong>⚠️ Watch Out:</strong> [Warning here]
-   </div>
-
-6. **Quote Blocks** - For powerful statements:
-   <blockquote class="pull-quote">"Your powerful quote here"</blockquote>
-
-7. **Lists That Pop**:
-   - Use ✅ for benefits
-   - Use ❌ for mistakes
-   - Use 👉 for action items
-   - Use 💰 for money/value related
-   - Use ⏱️ for time-saving tips
-
-8. **Comparison Tables** - When comparing options:
-   <table class="comparison-table">
-     <thead><tr><th>Feature</th><th>Option A</th><th>Option B</th></tr></thead>
-     <tbody>...</tbody>
-   </table>
-
-9. **Step-by-Step Sections**:
-   <div class="step-box">
-     <span class="step-number">1</span>
-     <div class="step-content">
-       <h4>Step Title</h4>
-       <p>Explanation...</p>
-     </div>
-   </div>
-
-10. **TL;DR Section** at the top:
-    <div class="tldr-box">
-      <strong>⚡ TL;DR:</strong> [2-3 sentence summary]
-    </div>
-
-11. **FAQ Schema** at the end:
-    <div class="faq-section" itemscope itemtype="https://schema.org/FAQPage">
-      <h2>Frequently Asked Questions</h2>
-      <div class="faq-item" itemscope itemprop="mainEntity" itemtype="https://schema.org/Question">
-        <h3 itemprop="name">Question here?</h3>
-        <div itemscope itemprop="acceptedAnswer" itemtype="https://schema.org/Answer">
-          <p itemprop="text">Answer here.</p>
-        </div>
-      </div>
-    </div>
-
-## CONTENT STRUCTURE (Follow This!)
-
-1. **Hook** (First 50 words) - Pattern interrupt or shocking stat
-2. **TL;DR Box** - For the skimmers
-3. **The Problem** - Agitate their pain (they should feel it)
-4. **The Solution** - Your framework/method
-5. **Deep Dive Sections** - H2s with rich content
-6. **Actionable Steps** - Numbered, clear, specific
-7. **FAQs** - Answer real questions (voice search optimized)
-8. **Strong CTA** - Tell them exactly what to do next
-
-## WRITING RULES
-
-✅ DO:
-- Use power words: Discover, Unlock, Proven, Secret, Revolutionary
-- Include specific numbers: "73.4% increase" not "big increase"
-- Add micro-stories (2-3 sentences that illustrate points)
-- Use analogies that a 5th grader would understand
-- Create open loops that keep them reading
-- End sections with a transition hook to the next section
-
-❌ DON'T:
-- Use passive voice
-- Write paragraphs longer than 3 sentences
-- Use jargon without explaining it
-- Make claims without backing them up
-- Use the same sentence structure twice in a row
-- Start sentences with "It is" or "There are"
-
-## OUTPUT FORMAT
-
-Respond ONLY with valid JSON (no markdown wrapper, no explanation):
-
+OUTPUT: Return ONLY valid JSON (no markdown, no explanation):
 {
-  "optimizedTitle": "Compelling title with keyword (50-60 chars) - use numbers, power words",
-  "metaDescription": "Click-worthy description with CTA (155-160 chars) - include benefit + curiosity gap",
-  "h1": "Slightly different from title, includes main keyword naturally",
-  "h2s": ["Benefit-focused H2 1", "Problem-agitating H2 2", "Solution H2 3", "How-to H2 4", "FAQ H2 5"],
-  "optimizedContent": "<div class='tldr-box'>...</div><h1>...</h1><p>Hook paragraph...</p>... [FULL HTML CONTENT - minimum 2000 words]",
-  "contentStrategy": {
-    "wordCount": 2500,
-    "readabilityScore": 72,
-    "keywordDensity": 1.1,
-    "lsiKeywords": ["semantic keyword 1", "semantic keyword 2", "semantic keyword 3", "semantic keyword 4", "semantic keyword 5"]
-  },
-  "internalLinks": [
-    {"anchor": "benefit-focused anchor text", "target": "/related-post-slug", "position": 350}
-  ],
-  "schema": {
-    "@context": "https://schema.org",
-    "@type": "Article",
-    "headline": "Your optimized title",
-    "description": "Your meta description",
-    "author": {"@type": "Person", "name": "Author Name"},
-    "dateModified": "${new Date().toISOString().split('T')[0]}"
-  },
-  "aiSuggestions": {
-    "contentGaps": "Specific missing topics with word count recommendations",
-    "quickWins": "3 things to implement in 5 minutes for instant improvement",
-    "improvements": ["Specific improvement 1", "Specific improvement 2", "Specific improvement 3"]
-  },
-  "qualityScore": 88,
-  "estimatedRankPosition": 3,
-  "confidenceLevel": 0.91
+  "optimizedTitle": "60 char max title with keyword",
+  "metaDescription": "155 char description with CTA",
+  "h1": "Main heading with keyword",
+  "h2s": ["Section 1", "Section 2", "Section 3"],
+  "optimizedContent": "<div class='tldr-box'>...</div><h2>...</h2><p>...</p>...",
+  "contentStrategy": {"wordCount": 1500, "readabilityScore": 75, "keywordDensity": 1.2, "lsiKeywords": ["kw1", "kw2"]},
+  "internalLinks": [{"anchor": "text", "target": "/slug", "position": 100}],
+  "schema": {"@context": "https://schema.org", "@type": "Article", "headline": "title"},
+  "aiSuggestions": {"contentGaps": "gaps", "quickWins": "wins", "improvements": ["imp1", "imp2"]},
+  "qualityScore": 85,
+  "estimatedRankPosition": 5,
+  "confidenceLevel": 0.85
 }`;
 
 serve(async (req) => {
@@ -409,7 +292,7 @@ Generate comprehensive SEO optimization recommendations.`;
                     model,
                     messages,
                     temperature: 0.7,
-                    max_tokens: 4000,
+                    max_tokens: 8192,
                   }),
                 };
 
@@ -425,7 +308,7 @@ Generate comprehensive SEO optimization recommendations.`;
                     model,
                     system: OPTIMIZATION_PROMPT,
                     messages: [{ role: 'user', content: userPrompt }],
-                    max_tokens: 4000,
+                    max_tokens: 8192,
                   }),
                 };
 
@@ -440,7 +323,7 @@ Generate comprehensive SEO optimization recommendations.`;
                     model,
                     messages,
                     temperature: 0.7,
-                    max_tokens: 4000,
+                    max_tokens: 8192,
                   }),
                 };
 
@@ -457,7 +340,7 @@ Generate comprehensive SEO optimization recommendations.`;
                     model,
                     messages,
                     temperature: 0.7,
-                    max_tokens: 4000,
+                    max_tokens: 8192,
                   }),
                 };
 
@@ -477,7 +360,7 @@ Generate comprehensive SEO optimization recommendations.`;
               model: 'google/gemini-2.5-flash',
               messages,
               temperature: 0.7,
-              max_tokens: 4000,
+              max_tokens: 8192,
             }),
           };
         };
