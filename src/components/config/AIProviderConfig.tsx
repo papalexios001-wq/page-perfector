@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { PasswordInput } from '@/components/shared/PasswordInput';
 import { useConfigStore, AIProvider } from '@/stores/config-store';
-import { getEdgeFunctionUrl } from '@/lib/supabase';
+import { getEdgeFunctionUrl, isSupabaseConfigured } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 
@@ -97,6 +97,22 @@ export function AIProviderConfig() {
     }
     if (!ai.model) {
       toast.error('Please select or enter a model');
+      return;
+    }
+
+    // Check if Supabase is configured
+    if (!isSupabaseConfigured()) {
+      toast.error('Backend not configured', {
+        description: 'Please connect Lovable Cloud to enable API validation',
+      });
+      // Fallback - just check if key looks valid
+      const isValidKey = ai.apiKey.length > 10;
+      setValidationResult({
+        success: isValidKey,
+        message: isValidKey ? 'Basic validation passed (Cloud not connected)' : 'API key too short',
+        provider: ai.provider,
+        model: ai.model,
+      });
       return;
     }
 

@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { PasswordInput } from '@/components/shared/PasswordInput';
 import { useConfigStore } from '@/stores/config-store';
-import { getEdgeFunctionUrl } from '@/lib/supabase';
+import { getEdgeFunctionUrl, isSupabaseConfigured } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 
@@ -53,6 +53,21 @@ export function WordPressConnection() {
     }
     if (!wordpress.applicationPassword) {
       toast.error('Please enter your Application Password');
+      return;
+    }
+
+    // Check if Supabase is configured
+    if (!isSupabaseConfigured()) {
+      toast.error('Backend not configured', {
+        description: 'Please connect Lovable Cloud to enable real-time validation',
+      });
+      // Fallback to basic validation
+      const isValidUrl = wordpress.siteUrl.startsWith('http');
+      setValidationResult({
+        success: isValidUrl,
+        message: isValidUrl ? 'Basic validation passed (Cloud not connected)' : 'Invalid URL format',
+      });
+      setWordPress({ isConnected: isValidUrl });
       return;
     }
 
