@@ -190,6 +190,36 @@ export type Database = {
           },
         ]
       }
+      serp_cache: {
+        Row: {
+          created_at: string
+          expires_at: string
+          gl: string
+          hl: string
+          id: string
+          query: string
+          result: Json
+        }
+        Insert: {
+          created_at?: string
+          expires_at?: string
+          gl?: string
+          hl?: string
+          id?: string
+          query: string
+          result: Json
+        }
+        Update: {
+          created_at?: string
+          expires_at?: string
+          gl?: string
+          hl?: string
+          id?: string
+          query?: string
+          result?: Json
+        }
+        Relationships: []
+      }
       wp_sites: {
         Row: {
           capabilities: Json | null
