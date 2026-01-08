@@ -83,16 +83,24 @@ CONTENT FORMAT:
 - Include actionable tips in highlight boxes
 - End with clear CTA and 3-5 FAQs
 
-HTML ELEMENTS TO USE:
-<div class="tldr-box"><strong>⚡ TL;DR:</strong> [summary]</div>
-<div class="key-insight"><strong>💡 Key Insight:</strong> [insight]</div>
-<div class="pro-tip"><strong>🚀 Pro Tip:</strong> [tip]</div>
-<div class="warning-box"><strong>⚠️ Watch Out:</strong> [warning]</div>
-<blockquote class="pull-quote">"quote"</blockquote>
+HTML ELEMENTS TO USE (IMPORTANT: use SINGLE quotes for attributes):
+<div class='tldr-box'><strong>TL;DR:</strong> [summary]</div>
+<div class='key-insight'><strong>Key Insight:</strong> [insight]</div>
+<div class='pro-tip'><strong>Pro Tip:</strong> [tip]</div>
+<div class='warning-box'><strong>Watch Out:</strong> [warning]</div>
+<blockquote class='pull-quote'>[quote]</blockquote>
 
 Use ✅ for benefits, ❌ for mistakes, 👉 for actions in lists.
 
-OUTPUT: Return ONLY valid JSON (no markdown, no explanation):
+CRITICAL JSON RULES:
+- Return ONLY valid JSON (no markdown, no explanation).
+- "optimizedContent" MUST be a single JSON string.
+- Do NOT include any unescaped double quotes (") inside optimizedContent.
+  - Use single quotes for HTML attributes.
+  - If you need quotation marks in text, use &quot; instead.
+- Do NOT include literal newlines inside optimizedContent. Use \n if needed.
+
+OUTPUT JSON SCHEMA:
 {
   "optimizedTitle": "60 char max title with keyword",
   "metaDescription": "155 char description with CTA",
@@ -107,6 +115,64 @@ OUTPUT: Return ONLY valid JSON (no markdown, no explanation):
   "estimatedRankPosition": 5,
   "confidenceLevel": 0.85
 }`;
+
+const escapeNewlinesInJsonStrings = (input: string): string => {
+  let out = '';
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i];
+
+    if (inString) {
+      if (ch === '\n') {
+        out += '\\n';
+        continue;
+      }
+      if (ch === '\r') {
+        continue;
+      }
+
+      if (!escaped && ch === '"') {
+        inString = false;
+        out += ch;
+        continue;
+      }
+
+      if (!escaped && ch === '\\') {
+        escaped = true;
+        out += ch;
+        continue;
+      }
+
+      escaped = false;
+      out += ch;
+      continue;
+    }
+
+    out += ch;
+    if (ch === '"') {
+      inString = true;
+      escaped = false;
+    }
+  }
+
+  return out;
+};
+
+const repairJsonStringForParsing = (raw: string): string => {
+  // 1) Normalize line endings
+  let s = raw.replace(/\r/g, '');
+
+  // 2) Repair a common failure mode: unescaped double quotes in HTML attributes
+  //    Example: <div class="tldr-box"> breaks JSON unless escaped
+  s = s.replace(/="([^"]*)"/g, "='$1'");
+
+  // 3) Escape literal newlines that appear inside quoted JSON strings
+  s = escapeNewlinesInJsonStrings(s);
+
+  return s;
+};
 
 serve(async (req) => {
   const idempotencyKey = req.headers.get('x-idempotency-key');
@@ -449,7 +515,7 @@ Generate comprehensive SEO optimization recommendations.`;
         let optimization;
         try {
           let jsonStr = aiContent.trim();
-          
+
           // Remove markdown code blocks (handles ```json, ``` json, ```JSON, etc.)
           const codeBlockMatch = jsonStr.match(/```(?:json|JSON)?\s*\n?([\s\S]*?)\n?```/);
           if (codeBlockMatch) {
@@ -458,7 +524,7 @@ Generate comprehensive SEO optimization recommendations.`;
             // Fallback: just strip ``` from start and end
             jsonStr = jsonStr.replace(/^```(?:json|JSON)?\s*\n?/, '').replace(/\n?```\s*$/, '');
           }
-          
+
           // Try to find JSON object if there's extra text before/after
           if (!jsonStr.startsWith('{')) {
             const jsonStart = jsonStr.indexOf('{');
@@ -472,7 +538,8 @@ Generate comprehensive SEO optimization recommendations.`;
               jsonStr = jsonStr.substring(0, jsonEnd + 1);
             }
           }
-          
+
+          jsonStr = repairJsonStringForParsing(jsonStr);
           optimization = JSON.parse(jsonStr);
         } catch (e) {
           logger.error('Failed to parse AI response', { content: aiContent.substring(0, 500), error: e instanceof Error ? e.message : 'Unknown' });
