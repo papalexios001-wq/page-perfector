@@ -49,6 +49,7 @@ interface OptimizationResult {
   metaDescription: string;
   h1: string;
   h2s: string[];
+  optimizedContent?: string; // Full optimized HTML content for publishing
   contentStrategy: {
     wordCount: number;
     readabilityScore: number;
@@ -188,14 +189,15 @@ export function PageQueue() {
     pageId: string, 
     optimization: OptimizationResult,
     publishStatus: 'draft' | 'publish' = 'draft'
-  ): Promise<boolean> => {
+  ): Promise<{ success: boolean; error?: string; postUrl?: string }> => {
     if (!wordpress.siteUrl || !wordpress.username || !wordpress.applicationPassword) {
-      return false;
+      return { success: false, error: 'WordPress not configured' };
     }
 
     const { data, error } = await invokeEdgeFunction<{
       success: boolean;
       message: string;
+      error?: string;
       postUrl?: string;
     }>('publish-to-wordpress', {
       pageId,
@@ -208,6 +210,7 @@ export function PageQueue() {
         metaDescription: optimization.metaDescription,
         h1: optimization.h1,
         h2s: optimization.h2s,
+        optimizedContent: optimization.optimizedContent, // CRITICAL: Include full content
         schema: optimization.schema,
         internalLinks: optimization.internalLinks,
       },
@@ -222,11 +225,16 @@ export function PageQueue() {
     });
 
     if (error) {
-      console.error(`[Publish] Error for ${pageId}:`, error);
-      return false;
+      console.error(`[Publish] Network error for ${pageId}:`, error);
+      return { success: false, error: error.message || 'Network error' };
     }
 
-    return data?.success || false;
+    if (!data?.success) {
+      console.error(`[Publish] API error for ${pageId}:`, data?.error || data?.message);
+      return { success: false, error: data?.error || data?.message || 'Unknown error' };
+    }
+
+    return { success: true, postUrl: data.postUrl };
   };
 
   const handleOptimizeSelected = async () => {
@@ -347,20 +355,24 @@ export function PageQueue() {
     if (!selectedPageResult?.result) return;
 
     setIsPublishing(true);
-    const success = await publishToWordPress(
+    const result = await publishToWordPress(
       selectedPageResult.page.id,
       selectedPageResult.result,
       publishStatus
     );
     setIsPublishing(false);
 
-    if (success) {
-      toast.success(`Published as ${publishStatus}!`);
+    if (result.success) {
+      toast.success(`Published as ${publishStatus}!`, {
+        description: result.postUrl ? `View: ${result.postUrl}` : undefined,
+      });
       setShowValidationDialog(false);
       setShowResultDialog(false);
       await fetchPages();
     } else {
-      toast.error('Publish failed');
+      toast.error('Publish failed', {
+        description: result.error || 'Check console for details',
+      });
     }
   };
 
@@ -404,14 +416,16 @@ export function PageQueue() {
       const optimization = jobData?.result as unknown as OptimizationResult | null;
       
       if (optimization) {
-        const success = await publishToWordPress(page.id, optimization, publishStatus);
-        if (success) {
+        const result = await publishToWordPress(page.id, optimization, publishStatus);
+        if (result.success) {
           successCount++;
         } else {
           errorCount++;
+          console.error(`[Publish] Failed for ${page.slug}:`, result.error);
         }
       } else {
         errorCount++;
+        console.error(`[Publish] No optimization result for ${page.slug}`);
       }
 
       await new Promise(r => setTimeout(r, 300));

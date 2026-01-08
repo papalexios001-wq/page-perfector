@@ -92,7 +92,7 @@ serve(async (req) => {
     }
 
     if (!pageData.post_id) {
-      throw new Error('No WordPress post_id associated with this page');
+      throw new Error('No WordPress post_id associated with this page. The page may not have been crawled correctly.');
     }
 
     // Normalize URL
@@ -102,10 +102,13 @@ serve(async (req) => {
     }
     normalizedUrl = normalizedUrl.replace(/\/+$/, '');
 
-    const authHeader = 'Basic ' + btoa(`${username}:${applicationPassword.replace(/\s+/g, '')}`);
+    // Build auth header - don't strip spaces from application password
+    const credentials = `${username}:${applicationPassword}`;
+    const authHeader = 'Basic ' + btoa(credentials);
+    console.log(`[Publish] Using Basic Auth for user: ${username}`);
 
-    // First, fetch current post to compare before/after
-    console.log(`[Publish] Fetching current post: ${pageData.post_id}`);
+    // First, verify the post exists in WordPress
+    console.log(`[Publish] Verifying post exists: ${pageData.post_id}`);
     const currentPostResponse = await fetch(
       `${normalizedUrl}/wp-json/wp/v2/posts/${pageData.post_id}?context=edit`,
       {
@@ -117,13 +120,33 @@ serve(async (req) => {
       }
     );
 
+    // Handle specific HTTP status codes for better error messages
+    if (currentPostResponse.status === 404) {
+      throw new Error(`Post ${pageData.post_id} doesn't exist in WordPress. It may have been deleted.`);
+    }
+    
+    if (currentPostResponse.status === 401) {
+      throw new Error('Authentication failed. Check your WordPress username and application password.');
+    }
+    
+    if (currentPostResponse.status === 403) {
+      throw new Error('Permission denied. Your WordPress user may not have edit_posts capability.');
+    }
+
     if (!currentPostResponse.ok) {
       const errorText = await currentPostResponse.text();
       console.error(`[Publish] Failed to fetch current post: ${currentPostResponse.status} - ${errorText}`);
-      throw new Error(`Failed to fetch current post: ${currentPostResponse.status}`);
+      throw new Error(`Failed to verify post exists: ${currentPostResponse.status}`);
     }
 
     const currentPost = await currentPostResponse.json();
+    
+    // Verify post is not trashed
+    if (currentPost.status === 'trash') {
+      throw new Error(`Post ${pageData.post_id} is in trash. Restore it in WordPress before publishing.`);
+    }
+    
+    console.log(`[Publish] Post verified. Current status: ${currentPost.status}`);
     
     const beforeState = {
       title: currentPost.title?.raw || currentPost.title?.rendered || '',
@@ -227,13 +250,33 @@ serve(async (req) => {
       const errorText = await updateResponse.text();
       console.error(`[Publish] Failed to update post: ${updateResponse.status} - ${errorText}`);
       
-      // Try to parse error for more details
-      try {
-        const errorData = JSON.parse(errorText);
-        throw new Error(errorData.message || `WordPress API error: ${updateResponse.status}`);
-      } catch {
-        throw new Error(`Failed to update WordPress post: ${updateResponse.status}`);
+      // Specific error handling by status code
+      let errorMessage = `WordPress API error: ${updateResponse.status}`;
+      
+      if (updateResponse.status === 401) {
+        errorMessage = 'Authentication failed. Check username/application password.';
+      } else if (updateResponse.status === 403) {
+        errorMessage = 'Permission denied. User lacks edit_posts capability.';
+      } else if (updateResponse.status === 400) {
+        try {
+          const errorData = JSON.parse(errorText);
+          errorMessage = errorData.message || errorData.code || 'Invalid request payload';
+        } catch {
+          errorMessage = 'Invalid request payload sent to WordPress';
+        }
+      } else if (updateResponse.status === 404) {
+        errorMessage = 'Post not found. It may have been deleted.';
+      } else {
+        try {
+          const errorData = JSON.parse(errorText);
+          errorMessage = errorData.message || errorMessage;
+        } catch {
+          // Keep default message
+        }
       }
+      
+      console.error(`[Publish] Detailed error: ${errorMessage}`, { status: updateResponse.status, body: errorText });
+      throw new Error(errorMessage);
     }
 
     const updatedPost = await updateResponse.json();
@@ -285,29 +328,43 @@ serve(async (req) => {
     );
 
   } catch (error) {
-    console.error('[Publish] Error:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+    console.error('[Publish] Error:', errorMessage);
 
-    // Log failure
+    // Build structured error details for logging
+    const errorDetails = {
+      timestamp: new Date().toISOString(),
+      endpoint: 'publish-to-wordpress',
+      errorMessage,
+      stack: error instanceof Error ? error.stack : undefined,
+    };
+
+    console.error('[Publish] Error details:', JSON.stringify(errorDetails));
+
+    // Log failure to activity_log with full context
     try {
-      const { pageId } = await req.clone().json();
+      const requestBody = await req.clone().json().catch(() => ({}));
+      const pageId = requestBody.pageId;
+      
       if (pageId) {
         await supabase
           .from('activity_log')
           .insert({
             page_id: pageId,
             type: 'error',
-            message: `Publish failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            message: `Publish failed: ${errorMessage}`,
+            details: errorDetails,
           });
       }
     } catch (e) {
-      console.error('[Publish] Failed to log error:', e);
+      console.error('[Publish] Failed to log error to activity_log:', e);
     }
 
     return new Response(
       JSON.stringify({
         success: false,
         message: 'Publish failed',
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
+        error: errorMessage,
       } as PublishResult),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );

@@ -24,6 +24,7 @@ interface OptimizationResult {
     metaDescription: string;
     h1: string;
     h2s: string[];
+    optimizedContent: string; // Full optimized HTML content for publishing
     contentStrategy: {
       wordCount: number;
       readabilityScore: number;
@@ -48,25 +49,34 @@ interface OptimizationResult {
   error?: string;
 }
 
-const OPTIMIZATION_PROMPT = `You are an elite SEO content optimization AI. Analyze the provided content and generate comprehensive optimization recommendations.
+const OPTIMIZATION_PROMPT = `You are an elite SEO content optimization AI. Analyze the provided content and generate comprehensive optimization recommendations WITH fully rewritten, publishable HTML content.
 
 Your task is to:
 1. Analyze the current content for SEO weaknesses
 2. Generate an optimized title (50-60 chars) with main keyword
 3. Create a compelling meta description (155-160 chars) with high CTR potential
 4. Suggest an H1 and 3-5 H2 subheadings
-5. Identify LSI (Latent Semantic Indexing) keywords
-6. Suggest internal linking opportunities
-7. Generate schema markup recommendations
-8. Provide actionable content improvement suggestions
-9. Calculate a quality score (0-100)
+5. **CRITICAL: Generate full optimizedContent - rewritten HTML body content that is ready to publish**
+6. Identify LSI (Latent Semantic Indexing) keywords
+7. Suggest internal linking opportunities with contextual anchor text
+8. Generate schema markup recommendations
+9. Provide actionable content improvement suggestions
+10. Calculate a quality score (0-100)
+
+The optimizedContent MUST be:
+- Full HTML content (not just snippets)
+- Include the H1 and H2s naturally integrated
+- Have internal links embedded with proper anchor text
+- Be SEO-optimized with target keywords naturally placed
+- Be ready to publish directly to WordPress
 
 Respond ONLY with a valid JSON object (no markdown, no explanation) in this exact format:
 {
-  "optimizedTitle": "SEO-optimized title here",
-  "metaDescription": "Compelling meta description here",
+  "optimizedTitle": "SEO-optimized title here (50-60 chars)",
+  "metaDescription": "Compelling meta description here (155-160 chars)",
   "h1": "Primary heading with main keyword",
   "h2s": ["Subheading 1", "Subheading 2", "Subheading 3"],
+  "optimizedContent": "<h1>Primary heading</h1><p>Intro paragraph...</p><h2>First section</h2><p>Content with <a href='/internal-link'>contextual links</a>...</p>",
   "contentStrategy": {
     "wordCount": 2500,
     "readabilityScore": 65,
