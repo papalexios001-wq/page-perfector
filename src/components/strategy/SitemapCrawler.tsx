@@ -9,7 +9,7 @@ import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { usePagesStore, PageRecord } from '@/stores/pages-store';
 import { useConfigStore } from '@/stores/config-store';
-import { getEdgeFunctionUrl } from '@/lib/supabase';
+import { getEdgeFunctionUrl, isSupabaseConfigured } from '@/lib/supabase';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -36,6 +36,13 @@ export function SitemapCrawler() {
     if (!wordpress.siteUrl) {
       toast.error('Please configure WordPress connection first', {
         description: 'Go to Configuration tab and connect your WordPress site',
+      });
+      return;
+    }
+
+    if (!isSupabaseConfigured()) {
+      toast.error('Backend not configured', {
+        description: 'Please connect Lovable Cloud to enable sitemap crawling',
       });
       return;
     }
