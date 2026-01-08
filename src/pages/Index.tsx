@@ -19,6 +19,7 @@ import { QuickOptimize } from '@/components/strategy/QuickOptimize';
 import { BulkMode } from '@/components/strategy/BulkMode';
 import { PageQueue } from '@/components/strategy/PageQueue';
 import { ActivityLog } from '@/components/strategy/ActivityLog';
+import { SerpIntelligence } from '@/components/strategy/SerpIntelligence';
 
 // Analytics components
 import { SessionStats } from '@/components/analytics/SessionStats';
@@ -130,6 +131,8 @@ const Index = () => {
                 <QuickOptimize />
                 <BulkMode />
               </div>
+
+              <SerpIntelligence />
 
               <PageQueue />
               <ActivityLog />
