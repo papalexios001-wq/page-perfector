@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Loader2, Check, AlertCircle, Zap, FileSearch, Brain, Shield, Upload } from 'lucide-react';
-import { Progress } from '@/components/ui/progress';
+import { Loader2, Check, AlertCircle, Zap, FileSearch, Brain, Shield, Upload, XCircle } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
 export interface OptimizationStep {
@@ -10,7 +10,6 @@ export interface OptimizationStep {
   description: string;
   icon: React.ReactNode;
   status: 'pending' | 'active' | 'completed' | 'error';
-  duration?: number; // Expected duration in ms
 }
 
 interface OptimizationProgressProps {
@@ -18,7 +17,14 @@ interface OptimizationProgressProps {
   currentStep: number;
   steps: OptimizationStep[];
   pageTitle?: string;
-  // No more client-side timeout - progress is real-time from server
+  // REAL progress from server (0-100)
+  serverProgress: number;
+  // Current step name from server
+  serverStepName?: string;
+  // Error message if failed
+  errorMessage?: string;
+  // Called when user wants to cancel/dismiss
+  onDismiss?: () => void;
 }
 
 const DEFAULT_STEPS: OptimizationStep[] = [
@@ -28,7 +34,6 @@ const DEFAULT_STEPS: OptimizationStep[] = [
     description: 'Checking WordPress API access...',
     icon: <Shield className="w-4 h-4" />,
     status: 'pending',
-    duration: 2000,
   },
   {
     id: 'fetch',
@@ -36,7 +41,6 @@ const DEFAULT_STEPS: OptimizationStep[] = [
     description: 'Retrieving page content from WordPress...',
     icon: <FileSearch className="w-4 h-4" />,
     status: 'pending',
-    duration: 5000,
   },
   {
     id: 'analyze',
@@ -44,7 +48,6 @@ const DEFAULT_STEPS: OptimizationStep[] = [
     description: 'Analyzing content with AI models...',
     icon: <Brain className="w-4 h-4" />,
     status: 'pending',
-    duration: 30000,
   },
   {
     id: 'optimize',
@@ -52,7 +55,6 @@ const DEFAULT_STEPS: OptimizationStep[] = [
     description: 'Creating SEO-optimized content...',
     icon: <Zap className="w-4 h-4" />,
     status: 'pending',
-    duration: 10000,
   },
   {
     id: 'save',
@@ -60,37 +62,69 @@ const DEFAULT_STEPS: OptimizationStep[] = [
     description: 'Storing optimization in database...',
     icon: <Upload className="w-4 h-4" />,
     status: 'pending',
-    duration: 2000,
   },
 ];
+
+// Map server step names to human-readable descriptions
+const STEP_DESCRIPTIONS: Record<string, string> = {
+  'queued': 'Waiting in queue...',
+  'validating': 'Validating WordPress connection...',
+  'fetching_content': 'Fetching page content...',
+  'fetching_sitemap_pages': 'Loading sitemap pages for internal linking...',
+  'fetching_wordpress': 'Retrieving WordPress data...',
+  'fetching_neuronwriter': 'Getting NeuronWriter recommendations...',
+  'waiting_neuronwriter': 'Waiting for NeuronWriter analysis...',
+  'analyzing_content': 'Analyzing content structure...',
+  'generating_content': 'AI is generating optimized content...',
+  'processing_response': 'Processing AI response...',
+  'validating_content': 'Validating optimized content...',
+  'optimization_complete': 'Saving results...',
+  'saving_results': 'Saving to database...',
+  'completed': 'Optimization complete!',
+  'failed': 'Optimization failed',
+};
 
 export function OptimizationProgress({ 
   isActive, 
   currentStep, 
   steps = DEFAULT_STEPS,
   pageTitle,
+  serverProgress,
+  serverStepName,
+  errorMessage,
+  onDismiss,
 }: OptimizationProgressProps) {
   const [elapsedTime, setElapsedTime] = useState(0);
-  const [estimatedTotal, setEstimatedTotal] = useState(0);
   const startTimeRef = useRef<number | null>(null);
+  const lastProgressRef = useRef<number>(0);
+  const lastProgressTimeRef = useRef<number>(Date.now());
 
-  // Calculate total estimated duration
+  // Detect stalled progress (no update for 60+ seconds)
+  const isStalled = serverProgress === lastProgressRef.current && 
+    (Date.now() - lastProgressTimeRef.current) > 60000 &&
+    serverProgress > 0 && serverProgress < 100;
+
+  // Track progress updates
   useEffect(() => {
-    const total = steps.reduce((sum, step) => sum + (step.duration || 5000), 0);
-    setEstimatedTotal(total);
-  }, [steps]);
+    if (serverProgress !== lastProgressRef.current) {
+      lastProgressRef.current = serverProgress;
+      lastProgressTimeRef.current = Date.now();
+    }
+  }, [serverProgress]);
 
-  // Timer for elapsed time (no timeout - progress is real-time from server)
+  // Timer for elapsed time
   useEffect(() => {
     if (isActive) {
       startTimeRef.current = Date.now();
       setElapsedTime(0);
+      lastProgressRef.current = 0;
+      lastProgressTimeRef.current = Date.now();
       
       const interval = setInterval(() => {
         if (startTimeRef.current) {
           setElapsedTime(Date.now() - startTimeRef.current);
         }
-      }, 100);
+      }, 1000);
 
       return () => {
         clearInterval(interval);
@@ -99,22 +133,6 @@ export function OptimizationProgress({
       startTimeRef.current = null;
     }
   }, [isActive]);
-
-  // Calculate progress based on step and elapsed time
-  const calculateProgress = (): number => {
-    if (!isActive || currentStep < 0) return 0;
-    
-    let completedDuration = 0;
-    for (let i = 0; i < currentStep && i < steps.length; i++) {
-      completedDuration += steps[i].duration || 5000;
-    }
-    
-    const currentStepDuration = steps[currentStep]?.duration || 5000;
-    const stepProgress = Math.min(elapsedTime / currentStepDuration, 0.95);
-    
-    const totalProgress = (completedDuration + (currentStepDuration * stepProgress)) / estimatedTotal;
-    return Math.min(totalProgress * 100, 95); // Never show 100% until actually complete
-  };
 
   const formatTime = (ms: number): string => {
     const seconds = Math.floor(ms / 1000);
@@ -126,21 +144,13 @@ export function OptimizationProgress({
     return `${seconds}s`;
   };
 
-  const getEstimatedRemaining = (): string => {
-    const progress = calculateProgress();
-    if (progress <= 0) return 'Calculating...';
-    
-    const estimatedTotalTime = (elapsedTime / progress) * 100;
-    const remaining = Math.max(0, estimatedTotalTime - elapsedTime);
-    
-    if (remaining < 1000) return 'Almost done...';
-    return `~${formatTime(remaining)} remaining`;
-  };
-
   if (!isActive) return null;
 
-  const progress = calculateProgress();
+  // Use REAL server progress, not fake time-based
+  const progress = Math.min(Math.max(serverProgress, 0), 100);
   const activeStep = steps[currentStep] || steps[0];
+  const stepDescription = serverStepName ? STEP_DESCRIPTIONS[serverStepName] || serverStepName : activeStep.description;
+  const hasFailed = errorMessage || activeStep.status === 'error';
 
   return (
     <AnimatePresence>
@@ -152,21 +162,30 @@ export function OptimizationProgress({
       >
         <div className="bg-card border border-border rounded-xl shadow-2xl overflow-hidden">
           {/* Header */}
-          <div className="bg-gradient-to-r from-primary/10 via-primary/5 to-transparent p-4 border-b border-border">
+          <div className={cn(
+            "p-4 border-b border-border",
+            hasFailed 
+              ? "bg-gradient-to-r from-destructive/10 via-destructive/5 to-transparent"
+              : "bg-gradient-to-r from-primary/10 via-primary/5 to-transparent"
+          )}>
             <div className="flex items-center gap-3">
               <div className="relative">
-                <motion.div
-                  animate={{ rotate: 360 }}
-                  transition={{ duration: 2, repeat: Infinity, ease: 'linear' }}
-                  className="text-primary"
-                >
-                  <Loader2 className="w-6 h-6" />
-                </motion.div>
-                <div className="absolute inset-0 bg-primary/20 rounded-full blur-md" />
+                {hasFailed ? (
+                  <XCircle className="w-6 h-6 text-destructive" />
+                ) : (
+                  <motion.div
+                    animate={{ rotate: 360 }}
+                    transition={{ duration: 2, repeat: Infinity, ease: 'linear' }}
+                    className="text-primary"
+                  >
+                    <Loader2 className="w-6 h-6" />
+                  </motion.div>
+                )}
+                {!hasFailed && <div className="absolute inset-0 bg-primary/20 rounded-full blur-md" />}
               </div>
               <div className="flex-1 min-w-0">
                 <h3 className="font-semibold text-foreground truncate">
-                  Optimizing Content
+                  {hasFailed ? 'Optimization Failed' : 'Optimizing Content'}
                 </h3>
                 {pageTitle && (
                   <p className="text-xs text-muted-foreground truncate">
@@ -175,45 +194,58 @@ export function OptimizationProgress({
                 )}
               </div>
               <div className="text-right">
-                <span className="text-lg font-bold text-primary">
+                <span className={cn(
+                  "text-lg font-bold",
+                  hasFailed ? "text-destructive" : "text-primary"
+                )}>
                   {Math.round(progress)}%
                 </span>
               </div>
             </div>
           </div>
 
-          {/* Progress Bar */}
+          {/* Progress Bar - REAL progress from server */}
           <div className="px-4 pt-4">
             <div className="relative h-2 bg-muted rounded-full overflow-hidden">
               <motion.div
-                className="absolute inset-y-0 left-0 bg-gradient-to-r from-primary via-primary to-primary/80 rounded-full"
+                className={cn(
+                  "absolute inset-y-0 left-0 rounded-full",
+                  hasFailed 
+                    ? "bg-destructive" 
+                    : "bg-gradient-to-r from-primary via-primary to-primary/80"
+                )}
                 initial={{ width: 0 }}
                 animate={{ width: `${progress}%` }}
-                transition={{ duration: 0.3, ease: 'easeOut' }}
+                transition={{ duration: 0.5, ease: 'easeOut' }}
               />
-              <motion.div
-                className="absolute inset-y-0 left-0 bg-primary/30 rounded-full"
-                animate={{ 
-                  width: [`${progress}%`, `${Math.min(progress + 5, 100)}%`],
-                  opacity: [0.5, 0]
-                }}
-                transition={{ duration: 1, repeat: Infinity }}
-              />
+              {!hasFailed && (
+                <motion.div
+                  className="absolute inset-y-0 left-0 bg-primary/30 rounded-full"
+                  animate={{ 
+                    width: [`${progress}%`, `${Math.min(progress + 3, 100)}%`],
+                    opacity: [0.5, 0]
+                  }}
+                  transition={{ duration: 1, repeat: Infinity }}
+                />
+              )}
             </div>
             <div className="flex justify-between mt-1 text-xs text-muted-foreground">
               <span>{formatTime(elapsedTime)}</span>
-              <span>{getEstimatedRemaining()}</span>
+              <span>{progress < 100 ? 'Processing...' : 'Complete!'}</span>
             </div>
           </div>
 
-          {/* Current Step */}
+          {/* Current Step - shows REAL step from server */}
           <div className="p-4">
-            <div className="flex items-center gap-3 p-3 bg-muted/50 rounded-lg">
+            <div className={cn(
+              "flex items-center gap-3 p-3 rounded-lg",
+              hasFailed ? "bg-destructive/10" : "bg-muted/50"
+            )}>
               <div className={cn(
                 "p-2 rounded-lg",
-                activeStep.status === 'error' ? 'bg-destructive/10 text-destructive' : 'bg-primary/10 text-primary'
+                hasFailed ? 'bg-destructive/10 text-destructive' : 'bg-primary/10 text-primary'
               )}>
-                {activeStep.status === 'error' ? (
+                {hasFailed ? (
                   <AlertCircle className="w-4 h-4" />
                 ) : (
                   activeStep.icon
@@ -224,7 +256,7 @@ export function OptimizationProgress({
                   {activeStep.label}
                 </p>
                 <p className="text-xs text-muted-foreground truncate">
-                  {activeStep.description}
+                  {errorMessage || stepDescription}
                 </p>
               </div>
               {activeStep.status === 'completed' && (
@@ -242,10 +274,10 @@ export function OptimizationProgress({
                   className={cn(
                     "flex-1 h-1 rounded-full transition-colors duration-300",
                     index < currentStep ? 'bg-primary' :
-                    index === currentStep ? 'bg-primary/60' :
+                    index === currentStep ? (hasFailed ? 'bg-destructive' : 'bg-primary/60') :
                     'bg-muted'
                   )}
-                  animate={index === currentStep ? {
+                  animate={index === currentStep && !hasFailed ? {
                     opacity: [0.6, 1, 0.6],
                   } : {}}
                   transition={{ duration: 1.5, repeat: Infinity }}
@@ -253,24 +285,38 @@ export function OptimizationProgress({
               ))}
             </div>
             <p className="text-center text-xs text-muted-foreground mt-2">
-              Step {currentStep + 1} of {steps.length}
+              Step {Math.min(currentStep + 1, steps.length)} of {steps.length}
             </p>
           </div>
 
-          {/* Long-running indicator (informational, no timeout) */}
-          {elapsedTime > 120000 && (
+          {/* Stalled warning */}
+          {isStalled && !hasFailed && (
             <motion.div
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: 'auto' }}
               className="px-4 pb-4"
             >
-              <div className="flex items-center gap-2 p-2 bg-blue-500/10 border border-blue-500/20 rounded-lg text-blue-600 dark:text-blue-400">
+              <div className="flex items-center gap-2 p-2 bg-yellow-500/10 border border-yellow-500/20 rounded-lg text-yellow-600 dark:text-yellow-400">
                 <AlertCircle className="w-4 h-4 flex-shrink-0" />
                 <p className="text-xs">
-                  Complex optimization in progress. This may take a few minutes for large content.
+                  Progress appears stalled. The server may still be processing large content.
                 </p>
               </div>
             </motion.div>
+          )}
+
+          {/* Error state with dismiss button */}
+          {hasFailed && onDismiss && (
+            <div className="px-4 pb-4">
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="w-full"
+                onClick={onDismiss}
+              >
+                Dismiss
+              </Button>
+            </div>
           )}
         </div>
       </motion.div>
