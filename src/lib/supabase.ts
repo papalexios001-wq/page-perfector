@@ -29,9 +29,15 @@ export interface EdgeFunctionError {
   status?: number;
 }
 
+export interface InvokeOptions {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}
+
 export async function invokeEdgeFunction<T = unknown>(
   functionName: string,
-  body: Record<string, unknown>
+  body: Record<string, unknown>,
+  options?: InvokeOptions
 ): Promise<EdgeFunctionResult<T>> {
   if (!isSupabaseConfigured()) {
     return {
@@ -43,10 +49,22 @@ export async function invokeEdgeFunction<T = unknown>(
     };
   }
 
+  // Setup timeout with AbortController
+  const timeoutMs = options?.timeoutMs ?? 90000; // 90 second default
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  // Combine with any provided signal
+  if (options?.signal) {
+    options.signal.addEventListener('abort', () => controller.abort());
+  }
+
   try {
     const { data, error } = await supabase.functions.invoke(functionName, {
       body,
     });
+
+    clearTimeout(timeoutId);
 
     if (error) {
       return {
@@ -61,6 +79,20 @@ export async function invokeEdgeFunction<T = unknown>(
 
     return { data: data as T, error: null };
   } catch (err) {
+    clearTimeout(timeoutId);
+
+    // Handle abort/timeout
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      console.error(`[invokeEdgeFunction] Timeout for ${functionName} after ${timeoutMs}ms`);
+      return {
+        data: null,
+        error: {
+          message: `Request timed out after ${Math.round(timeoutMs / 1000)} seconds. Please try again.`,
+          code: 'TIMEOUT_ERROR',
+        },
+      };
+    }
+
     console.error(`[invokeEdgeFunction] Error calling ${functionName}:`, err);
     return {
       data: null,
