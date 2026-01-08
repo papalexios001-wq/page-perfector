@@ -276,7 +276,7 @@ Generate comprehensive SEO optimization recommendations.`;
                     ],
                     generationConfig: {
                       temperature: 0.7,
-                      maxOutputTokens: 4000,
+                      maxOutputTokens: 24000,
                     },
                   }),
                 };
@@ -292,7 +292,7 @@ Generate comprehensive SEO optimization recommendations.`;
                     model,
                     messages,
                     temperature: 0.7,
-                    max_tokens: 8192,
+                    max_tokens: 24000,
                   }),
                 };
 
@@ -308,7 +308,7 @@ Generate comprehensive SEO optimization recommendations.`;
                     model,
                     system: OPTIMIZATION_PROMPT,
                     messages: [{ role: 'user', content: userPrompt }],
-                    max_tokens: 8192,
+                    max_tokens: 24000,
                   }),
                 };
 
@@ -323,7 +323,7 @@ Generate comprehensive SEO optimization recommendations.`;
                     model,
                     messages,
                     temperature: 0.7,
-                    max_tokens: 8192,
+                    max_tokens: 24000,
                   }),
                 };
 
@@ -340,7 +340,7 @@ Generate comprehensive SEO optimization recommendations.`;
                     model,
                     messages,
                     temperature: 0.7,
-                    max_tokens: 8192,
+                    max_tokens: 24000,
                   }),
                 };
 
@@ -360,7 +360,7 @@ Generate comprehensive SEO optimization recommendations.`;
               model: 'google/gemini-2.5-flash',
               messages,
               temperature: 0.7,
-              max_tokens: 8192,
+              max_tokens: 24000,
             }),
           };
         };
