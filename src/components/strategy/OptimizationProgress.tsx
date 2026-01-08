@@ -18,8 +18,7 @@ interface OptimizationProgressProps {
   currentStep: number;
   steps: OptimizationStep[];
   pageTitle?: string;
-  onTimeout?: () => void;
-  timeoutMs?: number;
+  // No more client-side timeout - progress is real-time from server
 }
 
 const DEFAULT_STEPS: OptimizationStep[] = [
@@ -70,13 +69,10 @@ export function OptimizationProgress({
   currentStep, 
   steps = DEFAULT_STEPS,
   pageTitle,
-  onTimeout,
-  timeoutMs = 90000,
 }: OptimizationProgressProps) {
   const [elapsedTime, setElapsedTime] = useState(0);
   const [estimatedTotal, setEstimatedTotal] = useState(0);
   const startTimeRef = useRef<number | null>(null);
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Calculate total estimated duration
   useEffect(() => {
@@ -84,7 +80,7 @@ export function OptimizationProgress({
     setEstimatedTotal(total);
   }, [steps]);
 
-  // Timer for elapsed time
+  // Timer for elapsed time (no timeout - progress is real-time from server)
   useEffect(() => {
     if (isActive) {
       startTimeRef.current = Date.now();
@@ -96,26 +92,13 @@ export function OptimizationProgress({
         }
       }, 100);
 
-      // Setup timeout
-      timeoutRef.current = setTimeout(() => {
-        if (onTimeout) {
-          onTimeout();
-        }
-      }, timeoutMs);
-
       return () => {
         clearInterval(interval);
-        if (timeoutRef.current) {
-          clearTimeout(timeoutRef.current);
-        }
       };
     } else {
       startTimeRef.current = null;
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
     }
-  }, [isActive, onTimeout, timeoutMs]);
+  }, [isActive]);
 
   // Calculate progress based on step and elapsed time
   const calculateProgress = (): number => {
@@ -274,17 +257,17 @@ export function OptimizationProgress({
             </p>
           </div>
 
-          {/* Timeout Warning */}
-          {elapsedTime > 60000 && (
+          {/* Long-running indicator (informational, no timeout) */}
+          {elapsedTime > 120000 && (
             <motion.div
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: 'auto' }}
               className="px-4 pb-4"
             >
-              <div className="flex items-center gap-2 p-2 bg-yellow-500/10 border border-yellow-500/20 rounded-lg text-yellow-600 dark:text-yellow-500">
+              <div className="flex items-center gap-2 p-2 bg-blue-500/10 border border-blue-500/20 rounded-lg text-blue-600 dark:text-blue-400">
                 <AlertCircle className="w-4 h-4 flex-shrink-0" />
                 <p className="text-xs">
-                  Taking longer than expected. The operation will timeout at 90s.
+                  Complex optimization in progress. This may take a few minutes for large content.
                 </p>
               </div>
             </motion.div>

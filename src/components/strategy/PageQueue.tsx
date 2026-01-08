@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   List, Search, Filter, Zap, Eye, Trash2, RotateCcw, FileText, 
@@ -22,6 +22,7 @@ import { OptimizationProgress, DEFAULT_STEPS, OptimizationStep } from './Optimiz
 import { supabase } from '@/integrations/supabase/client';
 import { invokeEdgeFunction } from '@/lib/supabase';
 import { useConfigStore } from '@/stores/config-store';
+import { useJobProgress } from '@/hooks/useJobProgress';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -100,11 +101,9 @@ export function PageQueue() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
   
-  // Progress bar state
+  // Progress bar state - now driven by real-time job progress
   const [optimizationSteps, setOptimizationSteps] = useState<OptimizationStep[]>(DEFAULT_STEPS);
-  const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [optimizingPageTitle, setOptimizingPageTitle] = useState<string>('');
-  const abortControllerRef = useRef<AbortController | null>(null);
   
   // Dialog states
   const [showResultDialog, setShowResultDialog] = useState(false);
@@ -115,6 +114,56 @@ export function PageQueue() {
   const [publishProgress, setPublishProgress] = useState<{ current: number; total: number; status: string }>({ current: 0, total: 0, status: '' });
   
   const { wordpress, ai, neuronWriter, optimization: optimizationSettings, advanced, siteContext } = useConfigStore();
+
+  // Real-time job progress hook
+  const { 
+    activeJob, 
+    currentStepIndex, 
+    watchJob, 
+    stopWatching, 
+    isRunning: jobIsRunning,
+    isCompleted: jobIsCompleted,
+    isFailed: jobIsFailed
+  } = useJobProgress({
+    onComplete: async (job) => {
+      console.log('[PageQueue] Job completed:', job);
+      setIsOptimizing(false);
+      setOptimizingPageTitle('');
+      await fetchPages();
+      
+      // Show success and open result dialog
+      if (job.result) {
+        const pageToShow = pages.find(p => p.id === job.pageId);
+        if (pageToShow) {
+          const optimization = job.result as unknown as OptimizationResult;
+          setSelectedPageResult({ page: pageToShow, result: optimization });
+          setShowResultDialog(true);
+          toast.success('Page optimized successfully!', {
+            description: `Quality score: ${optimization.qualityScore}/100`,
+          });
+        }
+      }
+    },
+    onError: async (job) => {
+      console.log('[PageQueue] Job failed:', job);
+      setIsOptimizing(false);
+      setOptimizingPageTitle('');
+      await fetchPages();
+      toast.error('Optimization failed', {
+        description: job.errorMessage || 'Check the console for details.',
+      });
+    }
+  });
+
+  // Update step visualization based on real job progress
+  useEffect(() => {
+    if (activeJob && jobIsRunning) {
+      setOptimizationSteps(prev => prev.map((s, i) => ({
+        ...s,
+        status: i < currentStepIndex ? 'completed' : i === currentStepIndex ? 'active' : 'pending'
+      })));
+    }
+  }, [activeJob, currentStepIndex, jobIsRunning]);
 
   const fetchPages = async () => {
     setIsLoading(true);
@@ -154,19 +203,13 @@ export function PageQueue() {
     }
   };
 
-  const optimizeSinglePage = useCallback(async (
-    pageId: string,
-    onStepChange?: (step: number) => void
-  ): Promise<{ success: boolean; optimization?: OptimizationResult; error?: string }> => {
+  // Start async optimization job (no client-side timeout - real-time progress via Supabase)
+  const startOptimizationJob = useCallback(async (
+    pageId: string
+  ): Promise<{ success: boolean; jobId?: string; error?: string }> => {
     if (!wordpress.siteUrl || !wordpress.username || !wordpress.applicationPassword) {
       return { success: false, error: 'WordPress not configured' };
     }
-
-    // Create abort controller for this request
-    abortControllerRef.current = new AbortController();
-
-    // Update step: Fetching content (step 1)
-    onStepChange?.(1);
 
     // Build AI configuration from user settings
     const aiConfigPayload = ai.apiKey && ai.model && ai.provider ? {
@@ -183,9 +226,11 @@ export function PageQueue() {
       projectName: neuronWriter.selectedProjectName,
     } : undefined;
 
+    // Call edge function - NO client timeout, job runs async
     const { data, error } = await invokeEdgeFunction<{
       success: boolean;
       message: string;
+      jobId?: string;
       optimization?: OptimizationResult;
       error?: string;
     }>('optimize-content', {
@@ -212,32 +257,19 @@ export function PageQueue() {
         targetAudience: siteContext.targetAudience,
         brandVoice: siteContext.brandVoice,
       },
-    }, {
-      signal: abortControllerRef.current.signal,
-      timeoutMs: 180000, // 180 second timeout for NeuronWriter + AI processing
     });
 
     if (error) {
       console.error(`[Optimize] Error for ${pageId}:`, error);
-      
-      // Handle timeout specifically
-      if (error.code === 'TIMEOUT_ERROR') {
-        // Reset the page status to failed
-        await supabase.from('pages').update({ status: 'failed' }).eq('id', pageId);
-      }
-      
       return { success: false, error: error.message };
     }
 
-    // Update step: Saving results (step 4)
-    onStepChange?.(4);
-
     return { 
       success: data?.success || false, 
-      optimization: data?.optimization,
+      jobId: data?.jobId,
       error: data?.error 
     };
-  }, [wordpress]);
+  }, [wordpress, ai, neuronWriter, advanced, siteContext]);
 
   const validateOptimization = async (optimization: OptimizationResult): Promise<ValidationResult | null> => {
     const { data, error } = await invokeEdgeFunction<ValidationResult>('validate-content', {
@@ -376,7 +408,7 @@ export function PageQueue() {
     for (const pageId of selectedPages) {
       setPages(prev => prev.map(p => p.id === pageId ? { ...p, status: 'optimizing' } : p));
 
-      const { success } = await optimizeSinglePage(pageId);
+      const { success } = await startOptimizationJob(pageId);
 
       if (success) {
         successCount++;
@@ -394,34 +426,16 @@ export function PageQueue() {
     setSelectedPages([]);
 
     if (successCount > 0 && errorCount === 0) {
-      toast.success(`Successfully optimized ${successCount} pages!`);
+      toast.success(`Successfully started optimization for ${successCount} pages!`);
     } else if (successCount > 0 && errorCount > 0) {
-      toast.warning(`Optimized ${successCount} pages, ${errorCount} failed`);
+      toast.warning(`Started ${successCount} jobs, ${errorCount} failed`);
     } else {
       toast.error(`Optimization failed for all ${errorCount} pages`);
     }
   };
 
-  const handleOptimizationTimeout = useCallback(async () => {
-    // Abort the current request
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
-    
-    setIsOptimizing(false);
-    setCurrentStepIndex(0);
-    setOptimizingPageTitle('');
-    
-    toast.error('Optimization timed out', {
-      description: 'The request took too long (>90 seconds). Please try again.',
-    });
-    
-    await fetchPages();
-  }, []);
-
   const handleOptimizeSingle = async (pageId: string) => {
     // Validate WordPress connection first
-    setCurrentStepIndex(0);
     setOptimizationSteps(prev => prev.map((s, i) => ({ ...s, status: i === 0 ? 'active' : 'pending' })));
     
     const wpValidation = await validateWordPressConnection();
@@ -442,49 +456,28 @@ export function PageQueue() {
     // Start the progress UI
     setIsOptimizing(true);
     setOptimizingPageTitle(pageToOptimize.title || pageToOptimize.slug || 'Unknown page');
-    setCurrentStepIndex(0);
     
     setPages(prev => prev.map(p => p.id === pageId ? { ...p, status: 'optimizing' } : p));
 
-    // Step progress callback
-    const handleStepChange = (step: number) => {
-      setCurrentStepIndex(step);
-      setOptimizationSteps(prev => prev.map((s, i) => ({
-        ...s,
-        status: i < step ? 'completed' : i === step ? 'active' : 'pending'
-      })));
-    };
+    // Start watching for real-time job updates
+    await watchJob(pageId);
 
-    // Start with step 0 (validating) - steps are updated by optimizeSinglePage callback
-    handleStepChange(0);
-
-    const { success, optimization, error } = await optimizeSinglePage(pageId, handleStepChange);
+    // Start the async job (no client-side timeout)
+    const { success, error } = await startOptimizationJob(pageId);
     
-    // Complete the progress
-    setIsOptimizing(false);
-    setCurrentStepIndex(0);
-    setOptimizingPageTitle('');
-    
-    // Fetch fresh pages data
-    await fetchPages();
-
-    if (success && optimization) {
-      // Mark all steps as completed
-      setOptimizationSteps(prev => prev.map(s => ({ ...s, status: 'completed' })));
-      
-      setSelectedPageResult({ 
-        page: { ...pageToOptimize, status: 'completed' }, 
-        result: optimization 
-      });
-      setShowResultDialog(true);
-      toast.success('Page optimized successfully!', {
-        description: `Quality score: ${optimization.qualityScore}/100`,
-      });
-    } else {
-      toast.error('Optimization failed', {
+    if (!success) {
+      // Job failed to start
+      setIsOptimizing(false);
+      setOptimizingPageTitle('');
+      await stopWatching();
+      await fetchPages();
+      toast.error('Failed to start optimization', {
         description: error || 'Check the console for details.',
       });
     }
+    // If success, the job is now running async
+    // Progress updates come via real-time subscription (useJobProgress hook)
+    // onComplete/onError callbacks handle the rest
   };
 
   const handleViewResult = async (page: DBPage) => {
@@ -1199,8 +1192,6 @@ export function PageQueue() {
         currentStep={currentStepIndex}
         steps={optimizationSteps}
         pageTitle={optimizingPageTitle}
-        onTimeout={handleOptimizationTimeout}
-        timeoutMs={90000}
       />
     </>
   );
