@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Settings, Rocket, BarChart3, Sparkles } from 'lucide-react';
+import { Settings, Rocket, BarChart3, Sparkles, CloudOff, CheckCircle2, Globe, Bot } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { isSupabaseConfigured } from '@/lib/supabase';
+import { useConfigStore } from '@/stores/config-store';
 
 // Config components
 import { WordPressConnection } from '@/components/config/WordPressConnection';
@@ -24,6 +26,38 @@ import { ScoreDistribution } from '@/components/analytics/ScoreDistribution';
 import { EnhancementBreakdown } from '@/components/analytics/EnhancementBreakdown';
 import { RecentJobs } from '@/components/analytics/RecentJobs';
 
+// Connection status component
+function ConnectionStatus() {
+  const { wordpress } = useConfigStore();
+  const backendConfigured = isSupabaseConfigured();
+  const wpConnected = wordpress.isConnected;
+
+  if (!backendConfigured) {
+    return (
+      <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-warning/10 border border-warning/30">
+        <CloudOff className="w-3.5 h-3.5 text-warning" />
+        <span className="text-xs font-medium text-warning">Backend Not Connected</span>
+      </div>
+    );
+  }
+
+  if (!wpConnected) {
+    return (
+      <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted/50 border border-border/50">
+        <Globe className="w-3.5 h-3.5 text-muted-foreground" />
+        <span className="text-xs font-medium text-muted-foreground">WordPress Not Connected</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-success/10 border border-success/30">
+      <div className="w-2 h-2 rounded-full bg-success animate-pulse" />
+      <span className="text-xs font-medium text-success">Connected</span>
+    </div>
+  );
+}
+
 const Index = () => {
   const [activeTab, setActiveTab] = useState('config');
 
@@ -44,10 +78,7 @@ const Index = () => {
                 <p className="text-xs text-muted-foreground">Enterprise AI Content Platform</p>
               </div>
             </div>
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-success/10 border border-success/30">
-              <div className="w-2 h-2 rounded-full bg-success animate-pulse" />
-              <span className="text-xs font-medium text-success">Connected</span>
-            </div>
+            <ConnectionStatus />
           </div>
         </div>
       </header>

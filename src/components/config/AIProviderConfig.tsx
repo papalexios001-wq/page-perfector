@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Bot, Sparkles, Brain, Zap, Network, Loader2, CheckCircle2, AlertCircle, Shield } from 'lucide-react';
+import { Bot, Sparkles, Brain, Zap, Network, Loader2, CheckCircle2, AlertCircle, Shield, CloudOff } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { PasswordInput } from '@/components/shared/PasswordInput';
 import { useConfigStore, AIProvider } from '@/stores/config-store';
-import { getEdgeFunctionUrl, isSupabaseConfigured } from '@/lib/supabase';
+import { invokeEdgeFunction, isSupabaseConfigured } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 
@@ -67,6 +67,7 @@ export function AIProviderConfig() {
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
   const [customModel, setCustomModel] = useState('');
 
+  const backendConfigured = isSupabaseConfigured();
   const currentProvider = providers.find(p => p.id === ai.provider);
   const allowsCustomModel = currentProvider?.allowCustomModel || false;
 
@@ -100,18 +101,10 @@ export function AIProviderConfig() {
       return;
     }
 
-    // Check if Supabase is configured
-    if (!isSupabaseConfigured()) {
-      toast.error('Backend not configured', {
-        description: 'Please connect Lovable Cloud to enable API validation',
-      });
-      // Fallback - just check if key looks valid
-      const isValidKey = ai.apiKey.length > 10;
-      setValidationResult({
-        success: isValidKey,
-        message: isValidKey ? 'Basic validation passed (Cloud not connected)' : 'API key too short',
-        provider: ai.provider,
-        model: ai.model,
+    // CRITICAL: Do NOT allow fake validation - backend is required
+    if (!backendConfigured) {
+      toast.error('Backend runtime not configured', {
+        description: 'Please connect Lovable Cloud to validate API keys securely.',
       });
       return;
     }
@@ -119,47 +112,43 @@ export function AIProviderConfig() {
     setIsValidating(true);
     setValidationResult(null);
 
-    try {
-      const response = await fetch(getEdgeFunctionUrl('validate-ai-provider'), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          provider: ai.provider,
-          apiKey: ai.apiKey,
-          model: ai.model,
-        }),
-      });
+    const { data, error } = await invokeEdgeFunction<ValidationResult>('validate-ai-provider', {
+      provider: ai.provider,
+      apiKey: ai.apiKey,
+      model: ai.model,
+    });
 
-      const result: ValidationResult = await response.json();
-      setValidationResult(result);
-
-      if (result.success) {
-        toast.success('API key validated!', {
-          description: `Successfully connected to ${result.provider}`,
-        });
-      } else {
-        toast.error('Validation failed', {
-          description: result.error || result.message,
-        });
-      }
-    } catch (error) {
+    if (error) {
       console.error('AI validation error:', error);
       setValidationResult({
         success: false,
         message: 'Validation failed',
         provider: ai.provider,
         model: ai.model,
-        error: error instanceof Error ? error.message : 'Network error',
-        errorCode: 'NETWORK_ERROR',
+        error: error.message,
+        errorCode: error.code,
       });
       toast.error('Validation failed', {
-        description: 'Network error - please check your connection',
+        description: error.message,
       });
-    } finally {
       setIsValidating(false);
+      return;
     }
+
+    const result = data!;
+    setValidationResult(result);
+
+    if (result.success) {
+      toast.success('API key validated!', {
+        description: `Successfully connected to ${result.provider}`,
+      });
+    } else {
+      toast.error('Validation failed', {
+        description: result.error || result.message,
+      });
+    }
+
+    setIsValidating(false);
   };
 
   return (
@@ -183,6 +172,23 @@ export function AIProviderConfig() {
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* Backend not configured warning */}
+          {!backendConfigured && (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="p-3 rounded-lg bg-warning/10 border border-warning/30 flex items-start gap-3"
+            >
+              <CloudOff className="w-5 h-5 text-warning shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-medium text-warning">Backend Runtime Not Configured</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Connect Lovable Cloud to enable secure API key validation. Without backend, validation is disabled.
+                </p>
+              </div>
+            </motion.div>
+          )}
+
           <div className="space-y-2">
             <Label className="text-sm font-medium">Select Provider</Label>
             <div className="grid grid-cols-5 gap-2">
@@ -314,7 +320,7 @@ export function AIProviderConfig() {
           <div className="flex items-center gap-3 pt-2">
             <Button
               onClick={handleValidateAPI}
-              disabled={isValidating || !ai.apiKey || !ai.model}
+              disabled={isValidating || !ai.apiKey || !ai.model || !backendConfigured}
               variant="outline"
               className="gap-2"
             >

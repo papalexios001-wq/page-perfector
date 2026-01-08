@@ -42,16 +42,31 @@ interface CrawlResponse {
   errors: string[];
 }
 
-function generateId(): string {
-  return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-}
+// Depth limit for nested sitemaps to prevent infinite recursion
+const MAX_SITEMAP_DEPTH = 3;
 
-async function fetchSitemap(url: string): Promise<string[]> {
-  console.log(`[Sitemap Crawler] Fetching sitemap: ${url}`);
+async function fetchSitemap(url: string, visitedUrls: Set<string> = new Set(), depth: number = 0): Promise<string[]> {
+  console.log(`[Sitemap Crawler] Fetching sitemap (depth ${depth}): ${url}`);
+  
+  // Prevent infinite loops
+  if (depth > MAX_SITEMAP_DEPTH) {
+    console.log(`[Sitemap Crawler] Max depth reached, skipping: ${url}`);
+    return [];
+  }
+  
+  if (visitedUrls.has(url)) {
+    console.log(`[Sitemap Crawler] Already visited, skipping: ${url}`);
+    return [];
+  }
+  visitedUrls.add(url);
+
+  // Handle .gz compressed sitemaps
+  const isGzipped = url.endsWith('.gz');
   
   const response = await fetch(url, {
     headers: {
       'Accept': 'application/xml, text/xml, */*',
+      'Accept-Encoding': isGzipped ? 'gzip' : 'identity',
       'User-Agent': 'WP-Optimizer-Pro/1.0 Sitemap Crawler',
     },
   });
@@ -60,27 +75,61 @@ async function fetchSitemap(url: string): Promise<string[]> {
     throw new Error(`Failed to fetch sitemap: ${response.status} ${response.statusText}`);
   }
 
-  const xmlText = await response.text();
+  let xmlText: string;
+  
+  if (isGzipped) {
+    // Decompress gzipped content
+    const buffer = await response.arrayBuffer();
+    const decompressed = new Response(
+      new Response(buffer).body?.pipeThrough(new DecompressionStream('gzip'))
+    );
+    xmlText = await decompressed.text();
+  } else {
+    xmlText = await response.text();
+  }
+
   const urls: string[] = [];
   
-  // Extract all <loc> elements
-  const locRegex = /<loc>([^<]+)<\/loc>/g;
-  let match;
+  // Check if this is a sitemapindex (contains other sitemaps)
+  const isSitemapIndex = xmlText.includes('<sitemapindex') || xmlText.includes('<sitemap>');
   
-  while ((match = locRegex.exec(xmlText)) !== null) {
-    const loc = match[1].trim();
+  if (isSitemapIndex) {
+    // Extract sitemap locations from sitemapindex
+    const sitemapRegex = /<sitemap>\s*<loc>([^<]+)<\/loc>/g;
+    let match;
     
-    // Check if this is a sitemap index (contains other sitemaps)
-    if (loc.includes('sitemap') && loc.endsWith('.xml')) {
-      console.log(`[Sitemap Crawler] Found nested sitemap: ${loc}`);
+    while ((match = sitemapRegex.exec(xmlText)) !== null) {
+      const sitemapLoc = match[1].trim();
+      console.log(`[Sitemap Crawler] Found nested sitemap: ${sitemapLoc}`);
       try {
-        const nestedUrls = await fetchSitemap(loc);
+        const nestedUrls = await fetchSitemap(sitemapLoc, visitedUrls, depth + 1);
         urls.push(...nestedUrls);
       } catch (e) {
-        console.log(`[Sitemap Crawler] Failed to fetch nested sitemap: ${loc}`);
+        console.log(`[Sitemap Crawler] Failed to fetch nested sitemap: ${sitemapLoc}`, e);
       }
-    } else if (!loc.endsWith('.xml')) {
-      urls.push(loc);
+    }
+  } else {
+    // Extract page URLs from urlset
+    const locRegex = /<url>\s*<loc>([^<]+)<\/loc>/g;
+    let match;
+    
+    while ((match = locRegex.exec(xmlText)) !== null) {
+      const loc = match[1].trim();
+      // Skip sitemap files
+      if (!loc.includes('sitemap') || !loc.endsWith('.xml')) {
+        urls.push(loc);
+      }
+    }
+    
+    // Fallback: simple loc extraction if no <url> wrappers
+    if (urls.length === 0) {
+      const simpleLoc = /<loc>([^<]+)<\/loc>/g;
+      while ((match = simpleLoc.exec(xmlText)) !== null) {
+        const loc = match[1].trim();
+        if (!loc.endsWith('.xml') && !loc.includes('sitemap')) {
+          urls.push(loc);
+        }
+      }
     }
   }
 
@@ -102,82 +151,165 @@ async function fetchWordPressPostInfo(
     
     if (!slug) return null;
 
-    // Try to find the post by slug
-    const endpoint = postType === 'page' ? 'pages' : 'posts';
-    const searchUrl = `${baseUrl}/wp-json/wp/v2/${endpoint}?slug=${encodeURIComponent(slug)}&_embed`;
+    // Try custom post type first, then fall back to standard endpoints
+    const endpoints = postType === 'page' 
+      ? ['pages'] 
+      : postType === 'post' 
+      ? ['posts'] 
+      : [postType, 'posts', 'pages'];
     
-    console.log(`[Sitemap Crawler] Fetching post info: ${searchUrl}`);
-    
-    const response = await fetch(searchUrl, {
-      headers: {
-        'Accept': 'application/json',
-        'Authorization': authHeader,
-        'User-Agent': 'WP-Optimizer-Pro/1.0',
-      },
-    });
-
-    if (!response.ok) {
-      console.log(`[Sitemap Crawler] Failed to fetch post: ${response.status}`);
-      return null;
-    }
-
-    const posts = await response.json();
-    if (!posts || posts.length === 0) return null;
-
-    const post = posts[0];
-    
-    // Count words in content
-    const plainText = post.content?.rendered?.replace(/<[^>]*>/g, ' ') || '';
-    const wordCount = plainText.split(/\s+/).filter(Boolean).length;
-
-    // Extract categories and tags
-    const categories: string[] = [];
-    const tags: string[] = [];
-    
-    if (post._embedded) {
-      const wpTerms = post._embedded['wp:term'] || [];
-      wpTerms.forEach((termArray: any[]) => {
-        termArray?.forEach((term: any) => {
-          if (term.taxonomy === 'category') {
-            categories.push(term.name);
-          } else if (term.taxonomy === 'post_tag') {
-            tags.push(term.name);
-          }
-        });
+    for (const endpoint of endpoints) {
+      const searchUrl = `${baseUrl}/wp-json/wp/v2/${endpoint}?slug=${encodeURIComponent(slug)}&_embed`;
+      
+      console.log(`[Sitemap Crawler] Trying endpoint: ${searchUrl}`);
+      
+      const response = await fetch(searchUrl, {
+        headers: {
+          'Accept': 'application/json',
+          'Authorization': authHeader,
+          'User-Agent': 'WP-Optimizer-Pro/1.0',
+        },
       });
+
+      if (!response.ok) {
+        console.log(`[Sitemap Crawler] Endpoint ${endpoint} returned ${response.status}`);
+        continue;
+      }
+
+      const posts = await response.json();
+      if (!posts || posts.length === 0) continue;
+
+      const post = posts[0];
+      
+      // Count words in content
+      const plainText = post.content?.rendered?.replace(/<[^>]*>/g, ' ') || '';
+      const wordCount = plainText.split(/\s+/).filter(Boolean).length;
+
+      // Extract categories and tags
+      const categories: string[] = [];
+      const tags: string[] = [];
+      
+      if (post._embedded) {
+        const wpTerms = post._embedded['wp:term'] || [];
+        wpTerms.forEach((termArray: any[]) => {
+          termArray?.forEach((term: any) => {
+            if (term.taxonomy === 'category') {
+              categories.push(term.name);
+            } else if (term.taxonomy === 'post_tag') {
+              tags.push(term.name);
+            }
+          });
+        });
+      }
+
+      // Get featured image
+      let featuredImage: string | undefined;
+      if (post._embedded?.['wp:featuredmedia']?.[0]?.source_url) {
+        featuredImage = post._embedded['wp:featuredmedia'][0].source_url;
+      }
+
+      return {
+        postId: post.id,
+        title: post.title?.rendered || slug,
+        wordCount,
+        categories,
+        tags,
+        featuredImage,
+      };
     }
 
-    // Get featured image
-    let featuredImage: string | undefined;
-    if (post._embedded?.['wp:featuredmedia']?.[0]?.source_url) {
-      featuredImage = post._embedded['wp:featuredmedia'][0].source_url;
-    }
-
-    return {
-      postId: post.id,
-      title: post.title?.rendered || slug,
-      wordCount,
-      categories,
-      tags,
-      featuredImage,
-    };
+    return null;
   } catch (error) {
     console.error(`[Sitemap Crawler] Error fetching post info for ${pageUrl}:`, error);
     return null;
   }
 }
 
-function calculateBasicScore(wordCount: number): { overall: number; components: Record<string, number> } {
-  // Simple heuristic-based scoring
-  const contentDepth = Math.min(100, Math.floor((wordCount / 2500) * 100));
-  const readability = 60 + Math.random() * 30; // Placeholder
-  const structure = 40 + Math.random() * 40;
-  const seoOnPage = 30 + Math.random() * 50;
-  const internalLinks = 20 + Math.random() * 40;
-  const schemaMarkup = 10 + Math.random() * 30;
-  const engagement = 30 + Math.random() * 40;
-  const eeat = 20 + Math.random() * 40;
+// Fetch page content directly if WP API fails
+async function fetchPageContent(url: string): Promise<{ wordCount: number; hasH1: boolean; hasH2: boolean; hasSchema: boolean }> {
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'Accept': 'text/html',
+        'User-Agent': 'WP-Optimizer-Pro/1.0',
+      },
+    });
 
+    if (!response.ok) {
+      return { wordCount: 0, hasH1: false, hasH2: false, hasSchema: false };
+    }
+
+    const html = await response.text();
+    
+    // Extract body content
+    const bodyMatch = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+    const bodyContent = bodyMatch ? bodyMatch[1] : html;
+    
+    // Strip tags and count words
+    const plainText = bodyContent
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+      .replace(/<[^>]*>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    
+    const wordCount = plainText.split(/\s+/).filter(Boolean).length;
+    
+    // Check for structural elements
+    const hasH1 = /<h1[^>]*>/i.test(html);
+    const hasH2 = /<h2[^>]*>/i.test(html);
+    const hasSchema = /application\/ld\+json/i.test(html);
+
+    return { wordCount, hasH1, hasH2, hasSchema };
+  } catch (error) {
+    console.error(`[Sitemap Crawler] Error fetching page content for ${url}:`, error);
+    return { wordCount: 0, hasH1: false, hasH2: false, hasSchema: false };
+  }
+}
+
+// Deterministic scoring based on real content analysis
+function calculateDeterministicScore(
+  wordCount: number,
+  hasH1: boolean,
+  hasH2: boolean,
+  hasSchema: boolean,
+  hasCategories: boolean,
+  hasTags: boolean,
+  hasFeaturedImage: boolean
+): { overall: number; components: Record<string, number> } {
+  // Content depth: 0-100 based on word count (ideal: 1500-3000 words)
+  let contentDepth = 0;
+  if (wordCount >= 2500) contentDepth = 100;
+  else if (wordCount >= 1500) contentDepth = 80 + ((wordCount - 1500) / 1000) * 20;
+  else if (wordCount >= 800) contentDepth = 50 + ((wordCount - 800) / 700) * 30;
+  else if (wordCount >= 300) contentDepth = 20 + ((wordCount - 300) / 500) * 30;
+  else contentDepth = (wordCount / 300) * 20;
+
+  // Readability: based on content presence
+  const readability = wordCount > 100 ? 70 : 30;
+
+  // Structure: based on heading usage
+  let structure = 30;
+  if (hasH1) structure += 30;
+  if (hasH2) structure += 40;
+
+  // SEO on-page: metadata and categorization
+  let seoOnPage = 40;
+  if (hasCategories) seoOnPage += 20;
+  if (hasTags) seoOnPage += 20;
+  if (hasFeaturedImage) seoOnPage += 20;
+
+  // Schema markup
+  const schemaMarkup = hasSchema ? 80 : 10;
+
+  // Internal links: baseline (would need actual link analysis)
+  const internalLinks = 40;
+
+  // Engagement/EEAT: baseline
+  const engagement = 50;
+  const eeat = 40;
+
+  // Weighted overall score
   const overall = Math.floor(
     contentDepth * 0.20 +
     readability * 0.10 +
@@ -190,7 +322,7 @@ function calculateBasicScore(wordCount: number): { overall: number; components: 
   );
 
   return {
-    overall,
+    overall: Math.min(100, Math.max(0, overall)),
     components: {
       contentDepth: Math.floor(contentDepth),
       readability: Math.floor(readability),
@@ -226,7 +358,7 @@ serve(async (req) => {
       return new Response(
         JSON.stringify({
           success: false,
-          message: 'Missing required fields',
+          message: 'Missing required fields: siteUrl and sitemapPath are required',
           pages: [],
           totalFound: 0,
           errors: ['siteUrl and sitemapPath are required'],
@@ -247,16 +379,19 @@ serve(async (req) => {
       ? sitemapPath 
       : `${normalizedUrl}${sitemapPath.startsWith('/') ? '' : '/'}${sitemapPath}`;
 
-    // Fetch sitemap
+    // Fetch sitemap with proper handling
     let allUrls: string[];
     try {
       allUrls = await fetchSitemap(sitemapUrl);
+      
+      // De-duplicate URLs
+      allUrls = [...new Set(allUrls)];
     } catch (error) {
       console.error('[Sitemap Crawler] Failed to fetch sitemap:', error);
       return new Response(
         JSON.stringify({
           success: false,
-          message: 'Failed to fetch sitemap',
+          message: `Failed to fetch sitemap: ${error instanceof Error ? error.message : 'Unknown error'}`,
           pages: [],
           totalFound: 0,
           errors: [error instanceof Error ? error.message : 'Failed to fetch sitemap'],
@@ -265,9 +400,22 @@ serve(async (req) => {
       );
     }
 
+    if (allUrls.length === 0) {
+      return new Response(
+        JSON.stringify({
+          success: true,
+          message: 'Sitemap is accessible but contains no page URLs',
+          pages: [],
+          totalFound: 0,
+          errors: [],
+        } as CrawlResponse),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     // Filter and limit URLs
     const filteredUrls = allUrls.slice(0, maxPages);
-    console.log(`[Sitemap Crawler] Processing ${filteredUrls.length} URLs (max: ${maxPages})`);
+    console.log(`[Sitemap Crawler] Processing ${filteredUrls.length} URLs (max: ${maxPages}, total found: ${allUrls.length})`);
 
     // Create auth header
     const authHeader = username && applicationPassword 
@@ -282,7 +430,7 @@ serve(async (req) => {
       try {
         const urlObj = new URL(url);
         const pathParts = urlObj.pathname.split('/').filter(Boolean);
-        const slug = pathParts[pathParts.length - 1] || urlObj.pathname;
+        const slug = pathParts[pathParts.length - 1] || urlObj.pathname.replace(/\//g, '') || 'home';
 
         // Fetch additional info from WordPress API if credentials provided
         let postInfo: Partial<PageInfo> | null = null;
@@ -290,12 +438,26 @@ serve(async (req) => {
           postInfo = await fetchWordPressPostInfo(normalizedUrl, url, authHeader, postType);
         }
 
-        const wordCount = postInfo?.wordCount || Math.floor(Math.random() * 2000) + 500;
-        const score = calculateBasicScore(wordCount);
+        // If WP API failed, fetch page content directly
+        let pageAnalysis = { wordCount: 0, hasH1: false, hasH2: false, hasSchema: false };
+        if (!postInfo?.wordCount) {
+          pageAnalysis = await fetchPageContent(url);
+        }
+
+        const wordCount = postInfo?.wordCount || pageAnalysis.wordCount;
+        const score = calculateDeterministicScore(
+          wordCount,
+          pageAnalysis.hasH1,
+          pageAnalysis.hasH2,
+          pageAnalysis.hasSchema,
+          (postInfo?.categories?.length || 0) > 0,
+          (postInfo?.tags?.length || 0) > 0,
+          !!postInfo?.featuredImage
+        );
 
         pages.push({
-          id: generateId(),
-          url: urlObj.pathname,
+          id: crypto.randomUUID(),
+          url: urlObj.pathname || '/',
           slug,
           title: postInfo?.title || slug.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
           postId: postInfo?.postId,
@@ -313,7 +475,7 @@ serve(async (req) => {
       }
     }
 
-    console.log(`[Sitemap Crawler] Successfully processed ${pages.length} pages`);
+    console.log(`[Sitemap Crawler] Successfully processed ${pages.length} pages with ${errors.length} errors`);
 
     return new Response(
       JSON.stringify({

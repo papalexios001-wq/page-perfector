@@ -1,13 +1,13 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Globe, Loader2, CheckCircle2, AlertCircle, Link, Shield, User, Server } from 'lucide-react';
+import { Globe, Loader2, CheckCircle2, AlertCircle, Link, Shield, User, Server, CloudOff } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { PasswordInput } from '@/components/shared/PasswordInput';
 import { useConfigStore } from '@/stores/config-store';
-import { getEdgeFunctionUrl, isSupabaseConfigured } from '@/lib/supabase';
+import { invokeEdgeFunction, isSupabaseConfigured } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 
@@ -41,6 +41,8 @@ export function WordPressConnection() {
   const [isTesting, setIsTesting] = useState(false);
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
 
+  const backendConfigured = isSupabaseConfigured();
+
   const handleTestConnection = async () => {
     // Validate inputs before making request
     if (!wordpress.siteUrl) {
@@ -56,69 +58,58 @@ export function WordPressConnection() {
       return;
     }
 
-    // Check if Supabase is configured
-    if (!isSupabaseConfigured()) {
-      toast.error('Backend not configured', {
-        description: 'Please connect Lovable Cloud to enable real-time validation',
+    // CRITICAL: Do NOT allow fake validation - backend is required
+    if (!backendConfigured) {
+      toast.error('Backend runtime not configured', {
+        description: 'Please connect Lovable Cloud to validate WordPress credentials securely.',
       });
-      // Fallback to basic validation
-      const isValidUrl = wordpress.siteUrl.startsWith('http');
-      setValidationResult({
-        success: isValidUrl,
-        message: isValidUrl ? 'Basic validation passed (Cloud not connected)' : 'Invalid URL format',
-      });
-      setWordPress({ isConnected: isValidUrl });
       return;
     }
 
     setIsTesting(true);
     setValidationResult(null);
 
-    try {
-      const response = await fetch(getEdgeFunctionUrl('validate-wordpress'), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          siteUrl: wordpress.siteUrl,
-          username: wordpress.username,
-          applicationPassword: wordpress.applicationPassword,
-        }),
-      });
+    const { data, error } = await invokeEdgeFunction<ValidationResult>('validate-wordpress', {
+      siteUrl: wordpress.siteUrl,
+      username: wordpress.username,
+      applicationPassword: wordpress.applicationPassword,
+    });
 
-      const result: ValidationResult = await response.json();
-      setValidationResult(result);
-
-      if (result.success) {
-        setWordPress({
-          isConnected: true,
-          lastConnectedAt: new Date().toISOString(),
-        });
-        toast.success('WordPress connected successfully!', {
-          description: `Connected to ${result.siteInfo?.name || wordpress.siteUrl}`,
-        });
-      } else {
-        setWordPress({ isConnected: false });
-        toast.error('Connection failed', {
-          description: result.error || result.message,
-        });
-      }
-    } catch (error) {
+    if (error) {
       console.error('WordPress validation error:', error);
       setValidationResult({
         success: false,
         message: 'Connection failed',
-        error: error instanceof Error ? error.message : 'Network error - please check your connection',
-        errorCode: 'NETWORK_ERROR',
+        error: error.message,
+        errorCode: error.code,
       });
       setWordPress({ isConnected: false });
       toast.error('Connection failed', {
-        description: 'Network error - please check your connection',
+        description: error.message,
       });
-    } finally {
       setIsTesting(false);
+      return;
     }
+
+    const result = data!;
+    setValidationResult(result);
+
+    if (result.success) {
+      setWordPress({
+        isConnected: true,
+        lastConnectedAt: new Date().toISOString(),
+      });
+      toast.success('WordPress connected successfully!', {
+        description: `Connected to ${result.siteInfo?.name || wordpress.siteUrl}`,
+      });
+    } else {
+      setWordPress({ isConnected: false });
+      toast.error('Connection failed', {
+        description: result.error || result.message,
+      });
+    }
+
+    setIsTesting(false);
   };
 
   const isFormValid = wordpress.siteUrl && wordpress.username && wordpress.applicationPassword;
@@ -144,6 +135,23 @@ export function WordPressConnection() {
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* Backend not configured warning */}
+          {!backendConfigured && (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="p-3 rounded-lg bg-warning/10 border border-warning/30 flex items-start gap-3"
+            >
+              <CloudOff className="w-5 h-5 text-warning shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-medium text-warning">Backend Runtime Not Configured</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Connect Lovable Cloud to enable secure WordPress validation. Without backend, connection testing is disabled.
+                </p>
+              </div>
+            </motion.div>
+          )}
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="siteUrl" className="text-sm font-medium">
@@ -204,7 +212,7 @@ export function WordPressConnection() {
           <div className="flex items-center gap-3 pt-2">
             <Button
               onClick={handleTestConnection}
-              disabled={isTesting || !isFormValid}
+              disabled={isTesting || !isFormValid || !backendConfigured}
               className="gap-2"
             >
               {isTesting ? (

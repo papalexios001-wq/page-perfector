@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Map, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Map, Loader2, AlertCircle, CheckCircle2, CloudOff } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -9,7 +9,7 @@ import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { usePagesStore, PageRecord } from '@/stores/pages-store';
 import { useConfigStore } from '@/stores/config-store';
-import { getEdgeFunctionUrl, isSupabaseConfigured } from '@/lib/supabase';
+import { invokeEdgeFunction, isSupabaseConfigured } from '@/lib/supabase';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -32,7 +32,12 @@ export function SitemapCrawler() {
   const [isCrawling, setIsCrawling] = useState(false);
   const [crawlResult, setCrawlResult] = useState<CrawlResult | null>(null);
 
+  const backendConfigured = isSupabaseConfigured();
+  const wpConnected = wordpress.isConnected;
+  const canCrawl = backendConfigured && wpConnected;
+
   const handleCrawl = async () => {
+    // CRITICAL: Do NOT allow crawling without proper configuration
     if (!wordpress.siteUrl) {
       toast.error('Please configure WordPress connection first', {
         description: 'Go to Configuration tab and connect your WordPress site',
@@ -40,8 +45,15 @@ export function SitemapCrawler() {
       return;
     }
 
-    if (!isSupabaseConfigured()) {
-      toast.error('Backend not configured', {
+    if (!wpConnected) {
+      toast.error('WordPress not connected', {
+        description: 'Please test your WordPress connection before crawling',
+      });
+      return;
+    }
+
+    if (!backendConfigured) {
+      toast.error('Backend runtime not configured', {
         description: 'Please connect Lovable Cloud to enable sitemap crawling',
       });
       return;
@@ -50,102 +62,98 @@ export function SitemapCrawler() {
     setIsCrawling(true);
     setCrawlResult(null);
 
-    try {
-      addActivityLog({
-        type: 'info',
-        pageUrl: sitemapUrl,
-        message: 'Starting sitemap crawl...',
-      });
+    addActivityLog({
+      type: 'info',
+      pageUrl: sitemapUrl,
+      message: 'Starting sitemap crawl...',
+    });
 
-      const response = await fetch(getEdgeFunctionUrl('crawl-sitemap'), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          siteUrl: wordpress.siteUrl,
-          sitemapPath: sitemapUrl,
-          username: wordpress.username,
-          applicationPassword: wordpress.applicationPassword,
-          postType,
-          maxPages: parseInt(maxPages),
-          excludeOptimized,
-          lowScoreOnly,
-        }),
-      });
+    const { data, error } = await invokeEdgeFunction<CrawlResult>('crawl-sitemap', {
+      siteUrl: wordpress.siteUrl,
+      sitemapPath: sitemapUrl,
+      username: wordpress.username,
+      applicationPassword: wordpress.applicationPassword,
+      postType,
+      maxPages: parseInt(maxPages),
+      excludeOptimized,
+      lowScoreOnly,
+    });
 
-      const result: CrawlResult = await response.json();
-      setCrawlResult(result);
-
-      if (result.success && result.pages.length > 0) {
-        // Convert API response to PageRecord format
-        const pageRecords: PageRecord[] = result.pages.map((page) => ({
-          id: page.id,
-          url: page.url,
-          slug: page.slug,
-          title: page.title,
-          wordCount: page.wordCount || 0,
-          status: 'pending' as const,
-          scoreBefore: page.scoreBefore,
-          postId: page.postId,
-          postType: page.postType || postType,
-          categories: page.categories || [],
-          tags: page.tags || [],
-          featuredImage: page.featuredImage,
-          retryCount: 0,
-        }));
-
-        // Clear existing and add new pages
-        clearPages();
-        addPages(pageRecords);
-
-        addActivityLog({
-          type: 'success',
-          pageUrl: sitemapUrl,
-          message: `Successfully crawled ${result.pages.length} pages from sitemap`,
-          details: { totalFound: result.totalFound, processed: result.pages.length },
-        });
-
-        toast.success(`Found ${result.pages.length} pages!`, {
-          description: `Total in sitemap: ${result.totalFound}`,
-        });
-      } else if (result.success && result.pages.length === 0) {
-        toast.warning('No pages found', {
-          description: 'The sitemap was accessible but contained no matching URLs',
-        });
-      } else {
-        addActivityLog({
-          type: 'error',
-          pageUrl: sitemapUrl,
-          message: result.message || 'Failed to crawl sitemap',
-        });
-
-        toast.error('Crawl failed', {
-          description: result.message || 'Could not fetch sitemap',
-        });
-      }
-    } catch (error) {
+    if (error) {
       console.error('Sitemap crawl error:', error);
       setCrawlResult({
         success: false,
-        message: error instanceof Error ? error.message : 'Network error',
+        message: error.message,
         pages: [],
         totalFound: 0,
-        errors: [error instanceof Error ? error.message : 'Network error'],
+        errors: [error.message],
       });
 
       addActivityLog({
         type: 'error',
         pageUrl: sitemapUrl,
-        message: 'Sitemap crawl failed - network error',
+        message: `Sitemap crawl failed: ${error.message}`,
       });
 
       toast.error('Crawl failed', {
-        description: 'Network error - please check your connection',
+        description: error.message,
       });
-    } finally {
       setIsCrawling(false);
+      return;
     }
+
+    const result = data!;
+    setCrawlResult(result);
+
+    if (result.success && result.pages.length > 0) {
+      // Convert API response to PageRecord format
+      const pageRecords: PageRecord[] = result.pages.map((page) => ({
+        id: page.id,
+        url: page.url,
+        slug: page.slug,
+        title: page.title,
+        wordCount: page.wordCount || 0,
+        status: 'pending' as const,
+        scoreBefore: page.scoreBefore,
+        postId: page.postId,
+        postType: page.postType || postType,
+        categories: page.categories || [],
+        tags: page.tags || [],
+        featuredImage: page.featuredImage,
+        retryCount: 0,
+      }));
+
+      // Clear existing and add new pages
+      clearPages();
+      addPages(pageRecords);
+
+      addActivityLog({
+        type: 'success',
+        pageUrl: sitemapUrl,
+        message: `Successfully crawled ${result.pages.length} pages from sitemap`,
+        details: { totalFound: result.totalFound, processed: result.pages.length },
+      });
+
+      toast.success(`Found ${result.pages.length} pages!`, {
+        description: `Total in sitemap: ${result.totalFound}`,
+      });
+    } else if (result.success && result.pages.length === 0) {
+      toast.warning('No pages found', {
+        description: 'The sitemap was accessible but contained no matching URLs',
+      });
+    } else {
+      addActivityLog({
+        type: 'error',
+        pageUrl: sitemapUrl,
+        message: result.message || 'Failed to crawl sitemap',
+      });
+
+      toast.error('Crawl failed', {
+        description: result.message || 'Could not fetch sitemap',
+      });
+    }
+
+    setIsCrawling(false);
   };
 
   return (
@@ -157,6 +165,18 @@ export function SitemapCrawler() {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* Backend not configured warning */}
+        {!backendConfigured && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="p-2 rounded-lg bg-warning/10 border border-warning/30 flex items-center gap-2"
+          >
+            <CloudOff className="w-4 h-4 text-warning shrink-0" />
+            <p className="text-xs text-warning">Connect Lovable Cloud to enable crawling</p>
+          </motion.div>
+        )}
+
         <div className="space-y-2">
           <Label className="text-xs text-muted-foreground">Sitemap URL</Label>
           <Input
@@ -165,7 +185,7 @@ export function SitemapCrawler() {
             onChange={(e) => setSitemapUrl(e.target.value)}
             className="bg-muted/50"
           />
-          {!wordpress.isConnected && (
+          {!wpConnected && backendConfigured && (
             <p className="text-xs text-warning flex items-center gap-1">
               <AlertCircle className="w-3 h-3" />
               Connect WordPress first
@@ -217,7 +237,7 @@ export function SitemapCrawler() {
 
         <Button
           onClick={handleCrawl}
-          disabled={isCrawling || !wordpress.isConnected}
+          disabled={isCrawling || !canCrawl}
           className="w-full gap-2"
         >
           {isCrawling ? (
