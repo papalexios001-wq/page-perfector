@@ -1192,6 +1192,14 @@ export function PageQueue() {
         currentStep={currentStepIndex}
         steps={optimizationSteps}
         pageTitle={optimizingPageTitle}
+        serverProgress={activeJob?.progress ?? 0}
+        serverStepName={activeJob?.currentStep}
+        errorMessage={activeJob?.errorMessage}
+        onDismiss={() => {
+          setIsOptimizing(false);
+          setOptimizingPageTitle('');
+          stopWatching();
+        }}
       />
     </>
   );
