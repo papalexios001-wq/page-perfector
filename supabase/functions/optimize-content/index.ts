@@ -566,12 +566,33 @@ Generate comprehensive SEO optimization recommendations.`;
         let optimization;
         try {
           let jsonStr = aiContent.trim();
-          if (jsonStr.startsWith('```')) {
-            jsonStr = jsonStr.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+          
+          // Remove markdown code blocks (handles ```json, ``` json, ```JSON, etc.)
+          const codeBlockMatch = jsonStr.match(/```(?:json|JSON)?\s*\n?([\s\S]*?)\n?```/);
+          if (codeBlockMatch) {
+            jsonStr = codeBlockMatch[1].trim();
+          } else if (jsonStr.startsWith('```')) {
+            // Fallback: just strip ``` from start and end
+            jsonStr = jsonStr.replace(/^```(?:json|JSON)?\s*\n?/, '').replace(/\n?```\s*$/, '');
           }
+          
+          // Try to find JSON object if there's extra text before/after
+          if (!jsonStr.startsWith('{')) {
+            const jsonStart = jsonStr.indexOf('{');
+            if (jsonStart !== -1) {
+              jsonStr = jsonStr.substring(jsonStart);
+            }
+          }
+          if (!jsonStr.endsWith('}')) {
+            const jsonEnd = jsonStr.lastIndexOf('}');
+            if (jsonEnd !== -1) {
+              jsonStr = jsonStr.substring(0, jsonEnd + 1);
+            }
+          }
+          
           optimization = JSON.parse(jsonStr);
         } catch (e) {
-          logger.error('Failed to parse AI response', { content: aiContent.substring(0, 500) });
+          logger.error('Failed to parse AI response', { content: aiContent.substring(0, 500), error: e instanceof Error ? e.message : 'Unknown' });
           throw new AppError('Failed to parse AI optimization response', 'AI_PARSE_ERROR', 500);
         }
 
