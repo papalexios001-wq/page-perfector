@@ -1,10 +1,16 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import {
+  Logger,
+  withRetry,
+  withIdempotency,
+  generateIdempotencyKey,
+  checkRateLimit,
+  corsHeaders,
+  AppError,
+  createErrorResponse,
+  validateRequired,
+} from "../_shared/utils.ts";
 
 interface OptimizeRequest {
   pageId: string;
@@ -24,7 +30,7 @@ interface OptimizationResult {
     metaDescription: string;
     h1: string;
     h2s: string[];
-    optimizedContent: string; // Full optimized HTML content for publishing
+    optimizedContent: string;
     contentStrategy: {
       wordCount: number;
       readabilityScore: number;
@@ -46,6 +52,8 @@ interface OptimizationResult {
     estimatedRankPosition: number;
     confidenceLevel: number;
   };
+  cached?: boolean;
+  requestId?: string;
   error?: string;
 }
 
@@ -102,6 +110,9 @@ Respond ONLY with a valid JSON object (no markdown, no explanation) in this exac
 }`;
 
 serve(async (req) => {
+  const idempotencyKey = req.headers.get('x-idempotency-key');
+  const logger = new Logger('optimize-content');
+
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
@@ -112,91 +123,108 @@ serve(async (req) => {
   
   const supabase = createClient(supabaseUrl, supabaseKey);
 
+  let pageId: string | undefined;
+
   try {
-    const { pageId, siteUrl, username, applicationPassword, targetKeyword, language, region }: OptimizeRequest = await req.json();
+    const body: OptimizeRequest = await req.json();
+    pageId = body.pageId;
+    const { siteUrl, username, applicationPassword, targetKeyword, language, region } = body;
 
-    console.log(`[Optimize] Starting optimization for page: ${pageId}`);
+    // Validate required fields
+    validateRequired(body as unknown as Record<string, unknown>, ['pageId', 'siteUrl', 'username', 'applicationPassword']);
 
-    if (!pageId || !siteUrl || !username || !applicationPassword) {
-      return new Response(
-        JSON.stringify({
-          success: false,
-          message: 'Missing required fields',
-          error: 'pageId, siteUrl, username, and applicationPassword are required',
-        }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    logger.info('Starting optimization', { pageId, siteUrl });
+
+    // Rate limiting: 10 optimizations per minute per site
+    const rateLimitKey = `optimize:${siteUrl}`;
+    const rateLimit = checkRateLimit(rateLimitKey, 10, 60000);
+    if (!rateLimit.allowed) {
+      logger.warn('Rate limit exceeded', { siteUrl, retryAfterMs: rateLimit.retryAfterMs });
+      throw new AppError(
+        `Rate limit exceeded. Try again in ${Math.ceil((rateLimit.retryAfterMs || 0) / 1000)} seconds.`,
+        'RATE_LIMIT_EXCEEDED',
+        429
       );
     }
 
     if (!lovableApiKey) {
-      return new Response(
-        JSON.stringify({
-          success: false,
-          message: 'AI not configured',
-          error: 'LOVABLE_API_KEY is not configured. Please enable Lovable AI.',
-        }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      throw new AppError('LOVABLE_API_KEY is not configured. Please enable Lovable AI.', 'AI_NOT_CONFIGURED', 500);
     }
 
-    // Update page status to optimizing
-    await supabase
-      .from('pages')
-      .update({ status: 'optimizing' })
-      .eq('id', pageId);
-
-    // Fetch page data from database
-    const { data: pageData, error: pageError } = await supabase
-      .from('pages')
-      .select('*')
-      .eq('id', pageId)
-      .single();
-
-    if (pageError || !pageData) {
-      throw new Error('Page not found in database');
-    }
-
-    console.log(`[Optimize] Fetching content for: ${pageData.url}`);
-
-    // Fetch page content from WordPress
-    let normalizedUrl = siteUrl.trim();
-    if (!normalizedUrl.startsWith('http://') && !normalizedUrl.startsWith('https://')) {
-      normalizedUrl = 'https://' + normalizedUrl;
-    }
-    normalizedUrl = normalizedUrl.replace(/\/+$/, '');
-
-    const authHeader = 'Basic ' + btoa(`${username}:${applicationPassword.replace(/\s+/g, '')}`);
+    // Idempotency check - use header key or generate from pageId + timestamp (10 second window)
+    const idemKey = idempotencyKey || generateIdempotencyKey('optimize', pageId, Math.floor(Date.now() / 10000).toString());
     
-    let pageContent = '';
-    let pageTitle = pageData.title;
+    const { result: optimizationResponse, cached } = await withIdempotency<OptimizationResult>(
+      idemKey,
+      async () => {
+        // Update page status to optimizing
+        await supabase
+          .from('pages')
+          .update({ status: 'optimizing' })
+          .eq('id', pageId);
 
-    // Try to fetch content if we have a post_id
-    if (pageData.post_id) {
-      try {
-        const wpResponse = await fetch(
-          `${normalizedUrl}/wp-json/wp/v2/posts/${pageData.post_id}?context=edit`,
-          {
-            headers: {
-              'Accept': 'application/json',
-              'Authorization': authHeader,
-              'User-Agent': 'WP-Optimizer-Pro/1.0',
-            },
-          }
-        );
+        // Fetch page data from database
+        const { data: pageData, error: pageError } = await supabase
+          .from('pages')
+          .select('*')
+          .eq('id', pageId)
+          .single();
 
-        if (wpResponse.ok) {
-          const wpData = await wpResponse.json();
-          pageContent = wpData.content?.raw || wpData.content?.rendered || '';
-          pageTitle = wpData.title?.raw || wpData.title?.rendered || pageTitle;
-          console.log(`[Optimize] Fetched content: ${pageContent.length} chars`);
+        if (pageError || !pageData) {
+          throw new AppError('Page not found in database', 'PAGE_NOT_FOUND', 404);
         }
-      } catch (e) {
-        console.log(`[Optimize] Could not fetch WP content, using page URL for analysis`);
-      }
-    }
 
-    // Build the optimization prompt
-    const userPrompt = `
+        logger.info('Fetching content', { url: pageData.url, postId: pageData.post_id });
+
+        // Fetch page content from WordPress
+        let normalizedUrl = siteUrl.trim();
+        if (!normalizedUrl.startsWith('http://') && !normalizedUrl.startsWith('https://')) {
+          normalizedUrl = 'https://' + normalizedUrl;
+        }
+        normalizedUrl = normalizedUrl.replace(/\/+$/, '');
+
+        const authHeader = 'Basic ' + btoa(`${username}:${applicationPassword.replace(/\s+/g, '')}`);
+        
+        let pageContent = '';
+        let pageTitle = pageData.title;
+
+        // Try to fetch content if we have a post_id (with retry)
+        if (pageData.post_id) {
+          try {
+            const wpResponse = await withRetry(
+              () => fetch(
+                `${normalizedUrl}/wp-json/wp/v2/posts/${pageData.post_id}?context=edit`,
+                {
+                  headers: {
+                    'Accept': 'application/json',
+                    'Authorization': authHeader,
+                    'User-Agent': 'WP-Optimizer-Pro/1.0',
+                  },
+                }
+              ),
+              {
+                maxRetries: 2,
+                initialDelayMs: 500,
+                retryableStatuses: [408, 429, 500, 502, 503, 504],
+                onRetry: (attempt, error, delay) => {
+                  logger.warn('Retrying WP content fetch', { attempt, error: error.message, delayMs: delay });
+                },
+              }
+            );
+
+            if (wpResponse.ok) {
+              const wpData = await wpResponse.json();
+              pageContent = wpData.content?.raw || wpData.content?.rendered || '';
+              pageTitle = wpData.title?.raw || wpData.title?.rendered || pageTitle;
+              logger.info('Fetched WP content', { chars: pageContent.length });
+            }
+          } catch (e) {
+            logger.warn('Could not fetch WP content, using page URL for analysis', { error: e instanceof Error ? e.message : 'Unknown' });
+          }
+        }
+
+        // Build the optimization prompt
+        const userPrompt = `
 Analyze and optimize this page:
 
 URL: ${pageData.url}
@@ -209,227 +237,210 @@ ${pageContent ? `\nContent Preview (first 3000 chars):\n${pageContent.substring(
 
 Generate comprehensive SEO optimization recommendations.`;
 
-    console.log(`[Optimize] Calling AI for optimization...`);
+        logger.info('Calling AI for optimization');
 
-    // Call Lovable AI Gateway with 45 second timeout
-    const aiController = new AbortController();
-    const aiTimeoutId = setTimeout(() => aiController.abort(), 45000);
+        // Call Lovable AI Gateway with 45 second timeout and retry
+        const aiController = new AbortController();
+        const aiTimeoutId = setTimeout(() => aiController.abort(), 45000);
 
-    let aiResponse: Response;
-    try {
-      aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${lovableApiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'google/gemini-2.5-flash',
-          messages: [
-            { role: 'system', content: OPTIMIZATION_PROMPT },
-            { role: 'user', content: userPrompt },
-          ],
-          temperature: 0.7,
-          max_tokens: 4000, // Increased for full content generation
-        }),
-        signal: aiController.signal,
-      });
-      clearTimeout(aiTimeoutId);
-    } catch (aiErr) {
-      clearTimeout(aiTimeoutId);
-      if (aiErr instanceof Error && aiErr.name === 'AbortError') {
-        console.error('[Optimize] AI request timeout after 45 seconds');
-        await supabase.from('pages').update({ status: 'failed' }).eq('id', pageId);
-        await supabase.from('activity_log').insert({
-          page_id: pageId,
-          type: 'error',
-          message: 'AI request timeout after 45 seconds. Try again or use simpler content.',
-        });
-        return new Response(
-          JSON.stringify({
-            success: false,
-            message: 'AI timeout',
-            error: 'AI request timed out after 45 seconds. The content may be too complex. Try again.',
-          }),
-          { status: 504, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-      throw aiErr;
-    }
+        let aiResponse: Response;
+        try {
+          aiResponse = await withRetry(
+            () => fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${lovableApiKey}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                model: 'google/gemini-2.5-flash',
+                messages: [
+                  { role: 'system', content: OPTIMIZATION_PROMPT },
+                  { role: 'user', content: userPrompt },
+                ],
+                temperature: 0.7,
+                max_tokens: 4000,
+              }),
+              signal: aiController.signal,
+            }),
+            {
+              maxRetries: 2,
+              initialDelayMs: 2000,
+              retryableStatuses: [429, 500, 502, 503, 504],
+              onRetry: (attempt, error, delay) => {
+                logger.warn('Retrying AI request', { attempt, error: error.message, delayMs: delay });
+              },
+            }
+          );
+          clearTimeout(aiTimeoutId);
+        } catch (aiErr) {
+          clearTimeout(aiTimeoutId);
+          if (aiErr instanceof Error && aiErr.name === 'AbortError') {
+            logger.error('AI request timeout after 45 seconds');
+            await supabase.from('pages').update({ status: 'failed' }).eq('id', pageId);
+            await supabase.from('activity_log').insert({
+              page_id: pageId,
+              type: 'error',
+              message: 'AI request timeout after 45 seconds.',
+            });
+            throw new AppError('AI request timed out after 45 seconds. Try again.', 'AI_TIMEOUT', 504);
+          }
+          throw aiErr;
+        }
 
-    if (!aiResponse.ok) {
-      const errorText = await aiResponse.text();
-      console.error(`[Optimize] AI error: ${aiResponse.status} - ${errorText}`);
-      
-      if (aiResponse.status === 429) {
-        await supabase.from('pages').update({ status: 'failed' }).eq('id', pageId);
-        return new Response(
-          JSON.stringify({ success: false, message: 'Rate limit exceeded', error: 'Too many requests. Please try again later.' }),
-          { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-      
-      if (aiResponse.status === 402) {
-        await supabase.from('pages').update({ status: 'failed' }).eq('id', pageId);
-        return new Response(
-          JSON.stringify({ success: false, message: 'Credits required', error: 'Please add credits to your Lovable workspace.' }),
-          { status: 402, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-      
-      throw new Error(`AI request failed: ${aiResponse.status}`);
-    }
+        if (!aiResponse.ok) {
+          const errorText = await aiResponse.text();
+          logger.error('AI error response', { status: aiResponse.status, body: errorText.substring(0, 500) });
+          
+          if (aiResponse.status === 429) {
+            await supabase.from('pages').update({ status: 'failed' }).eq('id', pageId);
+            throw new AppError('Too many requests. Please try again later.', 'AI_RATE_LIMIT', 429);
+          }
+          
+          if (aiResponse.status === 402) {
+            await supabase.from('pages').update({ status: 'failed' }).eq('id', pageId);
+            throw new AppError('Please add credits to your Lovable workspace.', 'CREDITS_REQUIRED', 402);
+          }
+          
+          throw new AppError(`AI request failed: ${aiResponse.status}`, 'AI_ERROR', 500);
+        }
 
-    const aiData = await aiResponse.json();
-    const aiContent = aiData.choices?.[0]?.message?.content;
+        const aiData = await aiResponse.json();
+        const aiContent = aiData.choices?.[0]?.message?.content;
 
-    if (!aiContent) {
-      throw new Error('No response from AI');
-    }
+        if (!aiContent) {
+          throw new AppError('No response from AI', 'AI_EMPTY_RESPONSE', 500);
+        }
 
-    console.log(`[Optimize] AI response received, parsing...`);
+        logger.info('AI response received, parsing');
 
-    // Parse AI response - extract JSON from potential markdown wrapper
-    let optimization;
-    try {
-      let jsonStr = aiContent.trim();
-      // Remove markdown code blocks if present
-      if (jsonStr.startsWith('```')) {
-        jsonStr = jsonStr.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
-      }
-      optimization = JSON.parse(jsonStr);
-    } catch (e) {
-      console.error('[Optimize] Failed to parse AI response:', aiContent);
-      throw new Error('Failed to parse AI optimization response');
-    }
+        // Parse AI response - extract JSON from potential markdown wrapper
+        let optimization;
+        try {
+          let jsonStr = aiContent.trim();
+          if (jsonStr.startsWith('```')) {
+            jsonStr = jsonStr.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+          }
+          optimization = JSON.parse(jsonStr);
+        } catch (e) {
+          logger.error('Failed to parse AI response', { content: aiContent.substring(0, 500) });
+          throw new AppError('Failed to parse AI optimization response', 'AI_PARSE_ERROR', 500);
+        }
 
-    // FIX #3: Validate all required fields exist
-    const requiredFields = [
-      'optimizedTitle',
-      'metaDescription',
-      'h1',
-      'h2s',
-      'optimizedContent',
-      'contentStrategy',
-      'schema',
-      'qualityScore'
-    ];
+        // Validate all required fields exist
+        const requiredFields = ['optimizedTitle', 'metaDescription', 'h1', 'h2s', 'optimizedContent', 'contentStrategy', 'schema', 'qualityScore'];
+        for (const field of requiredFields) {
+          if (!optimization[field]) {
+            logger.error('AI response missing field', { field });
+            throw new AppError(`AI response missing critical field: ${field}`, 'AI_INCOMPLETE_RESPONSE', 500);
+          }
+        }
 
-    for (const field of requiredFields) {
-      if (!optimization[field]) {
-        console.error(`[Optimize] AI response missing field: ${field}`);
-        throw new Error(
-          `AI response missing critical field: ${field}. Optimization is incomplete.`
-        );
-      }
-    }
+        // Validate optimizedContent is not too short
+        if (!optimization.optimizedContent || optimization.optimizedContent.trim().length < 100) {
+          logger.error('optimizedContent too short', { length: optimization.optimizedContent?.length || 0 });
+          throw new AppError(`optimizedContent too short (${optimization.optimizedContent?.length || 0} chars)`, 'AI_CONTENT_TOO_SHORT', 500);
+        }
 
-    // Validate optimizedContent is not too short
-    if (!optimization.optimizedContent || optimization.optimizedContent.trim().length < 100) {
-      console.error(`[Optimize] optimizedContent too short: ${optimization.optimizedContent?.length || 0} chars`);
-      throw new Error(
-        `optimizedContent too short (${optimization.optimizedContent?.length || 0} chars). ` +
-        `AI failed to generate full HTML content.`
-      );
-    }
+        logger.info('Validated response', { contentLength: optimization.optimizedContent.length });
 
-    console.log(`[Optimize] Validated response: ${optimization.optimizedContent.length} chars content`);
+        // Create job record
+        const { data: job, error: jobError } = await supabase
+          .from('jobs')
+          .insert({
+            page_id: pageId,
+            status: 'completed',
+            current_step: 'optimization_complete',
+            progress: 100,
+            started_at: new Date().toISOString(),
+            completed_at: new Date().toISOString(),
+            result: optimization,
+            ai_tokens_used: aiData.usage?.total_tokens || 0,
+          })
+          .select()
+          .single();
 
-    // Create job record
-    const { data: job, error: jobError } = await supabase
-      .from('jobs')
-      .insert({
-        page_id: pageId,
-        status: 'completed',
-        current_step: 'optimization_complete',
-        progress: 100,
-        started_at: new Date().toISOString(),
-        completed_at: new Date().toISOString(),
-        result: optimization,
-        ai_tokens_used: aiData.usage?.total_tokens || 0,
-      })
-      .select()
-      .single();
+        if (jobError) {
+          logger.error('Failed to create job', { error: jobError.message });
+        }
 
-    if (jobError) {
-      console.error('[Optimize] Failed to create job:', jobError);
-    }
+        // Update page with optimization results
+        const scoreAfter = {
+          overall: optimization.qualityScore || 75,
+          title: optimization.optimizedTitle ? 90 : 50,
+          meta: optimization.metaDescription ? 90 : 50,
+          headings: optimization.h2s?.length > 0 ? 85 : 50,
+          content: optimization.contentStrategy?.readabilityScore || 60,
+        };
 
-    // Update page with optimization results
-    const scoreAfter = {
-      overall: optimization.qualityScore || 75,
-      title: optimization.optimizedTitle ? 90 : 50,
-      meta: optimization.metaDescription ? 90 : 50,
-      headings: optimization.h2s?.length > 0 ? 85 : 50,
-      content: optimization.contentStrategy?.readabilityScore || 60,
-    };
-
-    await supabase
-      .from('pages')
-      .update({
-        status: 'completed',
-        score_after: scoreAfter,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', pageId);
-
-    // Log activity
-    await supabase
-      .from('activity_log')
-      .insert({
-        page_id: pageId,
-        job_id: job?.id,
-        type: 'success',
-        message: `Optimization completed with score ${optimization.qualityScore}`,
-        details: {
-          qualityScore: optimization.qualityScore,
-          estimatedRank: optimization.estimatedRankPosition,
-          improvements: optimization.aiSuggestions?.improvements?.length || 0,
-        },
-      });
-
-    console.log(`[Optimize] Successfully optimized page: ${pageId} (score: ${optimization.qualityScore})`);
-
-    return new Response(
-      JSON.stringify({
-        success: true,
-        message: 'Page optimized successfully',
-        optimization,
-      } as OptimizationResult),
-      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
-
-  } catch (error) {
-    console.error('[Optimize] Error:', error);
-
-    // Try to update page status to failed
-    try {
-      const { pageId } = await req.clone().json();
-      if (pageId) {
         await supabase
           .from('pages')
-          .update({ status: 'failed' })
+          .update({
+            status: 'completed',
+            score_after: scoreAfter,
+            updated_at: new Date().toISOString(),
+          })
           .eq('id', pageId);
 
+        // Log activity
         await supabase
           .from('activity_log')
           .insert({
             page_id: pageId,
-            type: 'error',
-            message: `Optimization failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            job_id: job?.id,
+            type: 'success',
+            message: `Optimization completed with score ${optimization.qualityScore}`,
+            details: {
+              qualityScore: optimization.qualityScore,
+              estimatedRank: optimization.estimatedRankPosition,
+              improvements: optimization.aiSuggestions?.improvements?.length || 0,
+              requestId: logger.getRequestId(),
+            },
           });
-      }
-    } catch (e) {
-      console.error('[Optimize] Failed to update error status:', e);
+
+        logger.info('Successfully optimized page', { qualityScore: optimization.qualityScore });
+
+        return {
+          success: true,
+          message: 'Page optimized successfully',
+          optimization,
+          requestId: logger.getRequestId(),
+        };
+      },
+      300000 // 5 minute TTL for idempotency
+    );
+
+    // If result was cached, log it
+    if (cached) {
+      logger.info('Returning cached optimization result', { pageId });
     }
 
     return new Response(
-      JSON.stringify({
-        success: false,
-        message: 'Optimization failed',
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-      } as OptimizationResult),
+      JSON.stringify({ ...optimizationResponse, cached }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
+
+  } catch (error) {
+    logger.error('Optimization failed', { 
+      error: error instanceof Error ? error.message : 'Unknown error',
+      pageId 
+    });
+
+    // Try to update page status to failed
+    if (pageId) {
+      try {
+        await supabase.from('pages').update({ status: 'failed' }).eq('id', pageId);
+        await supabase.from('activity_log').insert({
+          page_id: pageId,
+          type: 'error',
+          message: `Optimization failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          details: { requestId: logger.getRequestId() },
+        });
+      } catch (e) {
+        logger.error('Failed to update error status', { error: e instanceof Error ? e.message : 'Unknown' });
+      }
+    }
+
+    return createErrorResponse(error as Error, logger.getRequestId());
   }
 });
