@@ -114,7 +114,7 @@ export function PageQueue() {
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
   const [publishProgress, setPublishProgress] = useState<{ current: number; total: number; status: string }>({ current: 0, total: 0, status: '' });
   
-  const { wordpress, ai, optimization: optimizationSettings, advanced, siteContext } = useConfigStore();
+  const { wordpress, ai, neuronWriter, optimization: optimizationSettings, advanced, siteContext } = useConfigStore();
 
   const fetchPages = async () => {
     setIsLoading(true);
@@ -175,6 +175,14 @@ export function PageQueue() {
       model: ai.model,
     } : undefined;
 
+    // Build NeuronWriter configuration if enabled
+    const neuronWriterPayload = neuronWriter.enabled && neuronWriter.isValidated && neuronWriter.apiKey && neuronWriter.selectedProjectId ? {
+      enabled: true,
+      apiKey: neuronWriter.apiKey,
+      projectId: neuronWriter.selectedProjectId,
+      projectName: neuronWriter.selectedProjectName,
+    } : undefined;
+
     const { data, error } = await invokeEdgeFunction<{
       success: boolean;
       message: string;
@@ -186,6 +194,7 @@ export function PageQueue() {
       username: wordpress.username,
       applicationPassword: wordpress.applicationPassword,
       aiConfig: aiConfigPayload,
+      neuronWriter: neuronWriterPayload,
       advanced: {
         targetScore: advanced.targetScore,
         minWordCount: advanced.minWordCount,
@@ -205,7 +214,7 @@ export function PageQueue() {
       },
     }, {
       signal: abortControllerRef.current.signal,
-      timeoutMs: 150000, // 150 second timeout for longer content
+      timeoutMs: 180000, // 180 second timeout for NeuronWriter + AI processing
     });
 
     if (error) {

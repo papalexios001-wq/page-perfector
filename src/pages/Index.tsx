@@ -8,6 +8,7 @@ import { useConfigStore } from '@/stores/config-store';
 // Config components
 import { WordPressConnection } from '@/components/config/WordPressConnection';
 import { AIProviderConfig } from '@/components/config/AIProviderConfig';
+import { NeuronWriterConfig } from '@/components/config/NeuronWriterConfig';
 import { SiteContext } from '@/components/config/SiteContext';
 import { OptimizationModeConfig } from '@/components/config/OptimizationModeConfig';
 import { AdvancedSettings } from '@/components/config/AdvancedSettings';
@@ -111,6 +112,7 @@ const Index = () => {
             >
               <WordPressConnection />
               <AIProviderConfig />
+              <NeuronWriterConfig />
               <SiteContext />
               <OptimizationModeConfig />
               <AdvancedSettings />

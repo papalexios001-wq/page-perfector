@@ -40,6 +40,43 @@ interface SiteContext {
   brandVoice?: string;
 }
 
+interface NeuronWriterConfig {
+  enabled: boolean;
+  apiKey: string;
+  projectId: string;
+  projectName?: string;
+}
+
+interface NeuronWriterRecommendations {
+  success: boolean;
+  status: string;
+  queryId?: string;
+  targetWordCount?: number;
+  readabilityTarget?: number;
+  titleTerms?: string;
+  h1Terms?: string;
+  h2Terms?: string;
+  contentTerms?: string;
+  extendedTerms?: string;
+  entities?: string;
+  termsDetailed?: {
+    title: Array<{ t: string; usage_pc: number }>;
+    content: Array<{ t: string; usage_pc: number; sugg_usage?: [number, number] }>;
+    entities: Array<{ t: string; importance: number; relevance: number; confidence: number }>;
+  };
+  questions?: {
+    suggested: string[];
+    peopleAlsoAsk: string[];
+    contentQuestions: string[];
+  };
+  competitors?: Array<{
+    rank: number;
+    url: string;
+    title: string;
+    score?: number;
+  }>;
+}
+
 interface OptimizeRequest {
   pageId: string;
   siteUrl: string;
@@ -49,6 +86,7 @@ interface OptimizeRequest {
   language?: string;
   region?: string;
   aiConfig?: AIConfig;
+  neuronWriter?: NeuronWriterConfig;
   advanced?: AdvancedSettings;
   siteContext?: SiteContext;
 }
@@ -347,7 +385,7 @@ serve(async (req) => {
   try {
     const body: OptimizeRequest = await req.json();
     pageId = body.pageId;
-    const { siteUrl, username, applicationPassword, targetKeyword, language, region, aiConfig, advanced, siteContext } = body;
+    const { siteUrl, username, applicationPassword, targetKeyword, language, region, aiConfig, neuronWriter, advanced, siteContext } = body;
 
     // Use defaults if advanced settings not provided
     const effectiveAdvanced: AdvancedSettings = {
@@ -361,6 +399,38 @@ serve(async (req) => {
       enableKeyTakeaways: advanced?.enableKeyTakeaways ?? true,
       enableCtas: advanced?.enableCtas ?? true,
     };
+
+    // Fetch NeuronWriter recommendations if enabled
+    let neuronWriterData: NeuronWriterRecommendations | null = null;
+    if (neuronWriter?.enabled && neuronWriter?.apiKey && neuronWriter?.projectId) {
+      logger.info('Fetching NeuronWriter recommendations', { projectId: neuronWriter.projectId });
+      try {
+        const nwResponse = await fetch(`${supabaseUrl}/functions/v1/neuronwriter`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${supabaseKey}`,
+          },
+          body: JSON.stringify({
+            action: 'get-recommendations',
+            apiKey: neuronWriter.apiKey,
+            projectId: neuronWriter.projectId,
+            keyword: targetKeyword || '',
+            language: language || 'English',
+          }),
+        });
+        if (nwResponse.ok) {
+          neuronWriterData = await nwResponse.json();
+          logger.info('NeuronWriter data received', { 
+            status: neuronWriterData?.status,
+            hasTerms: !!neuronWriterData?.contentTerms,
+            hasQuestions: !!neuronWriterData?.questions,
+          });
+        }
+      } catch (nwError) {
+        logger.warn('NeuronWriter fetch failed, continuing without', { error: nwError instanceof Error ? nwError.message : 'Unknown' });
+      }
+    }
 
     // Validate required fields
     validateRequired(body as unknown as Record<string, unknown>, ['pageId', 'siteUrl', 'username', 'applicationPassword']);
@@ -498,11 +568,45 @@ serve(async (req) => {
           await supabase.from('jobs').update({ current_step: 'analyzing_content', progress: 40 }).eq('id', jobId);
         }
 
+        // Build NeuronWriter context section if available
+        const neuronWriterSection = neuronWriterData?.status === 'ready' ? `
+═══════════════════════════════════════════════════════════════
+🧠 NEURONWRITER SEO INTELLIGENCE (USE THIS DATA!)
+═══════════════════════════════════════════════════════════════
+
+📊 TARGET METRICS:
+- Recommended Word Count: ${neuronWriterData.targetWordCount || 'N/A'}
+- Readability Target: ${neuronWriterData.readabilityTarget || 'N/A'}
+
+📝 TITLE TERMS (include in title):
+${neuronWriterData.titleTerms || 'N/A'}
+
+📌 H1 TERMS (include in H1):
+${neuronWriterData.h1Terms || 'N/A'}
+
+📌 H2 TERMS (use in subheadings):
+${neuronWriterData.h2Terms || 'N/A'}
+
+🔤 CONTENT TERMS WITH USAGE RANGES (CRITICAL - include these!):
+${neuronWriterData.contentTerms || 'N/A'}
+
+🏷️ ENTITIES TO COVER (important for AI visibility):
+${neuronWriterData.entities || 'N/A'}
+
+❓ PEOPLE ALSO ASK QUESTIONS (use for FAQ section):
+${neuronWriterData.questions?.peopleAlsoAsk?.join('\n') || 'N/A'}
+
+❓ CONTENT QUESTIONS (answer these in content):
+${neuronWriterData.questions?.contentQuestions?.join('\n') || 'N/A'}
+
+🏆 TOP COMPETITORS (beat their scores):
+${neuronWriterData.competitors?.map(c => `#${c.rank}: ${c.title} (Score: ${c.score || 'N/A'})`).join('\n') || 'N/A'}
+` : '';
+
         // Build the user prompt
         const userPrompt = `
 OPTIMIZE THIS PAGE FOR MAXIMUM SEO/GEO/AEO PERFORMANCE:
-
-═══════════════════════════════════════════════════════════════
+${neuronWriterSection}
 PAGE DETAILS
 ═══════════════════════════════════════════════════════════════
 URL: ${pageData.url}

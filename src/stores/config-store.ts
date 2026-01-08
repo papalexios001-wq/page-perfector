@@ -21,6 +21,14 @@ interface AIConfig {
   serperApiKey?: string;
 }
 
+interface NeuronWriterConfig {
+  enabled: boolean;
+  apiKey: string;
+  isValidated: boolean;
+  selectedProjectId?: string;
+  selectedProjectName?: string;
+}
+
 interface SiteContext {
   organizationName: string;
   authorName: string;
@@ -57,6 +65,7 @@ interface AdvancedSettings {
 interface ConfigState {
   wordpress: WordPressConfig;
   ai: AIConfig;
+  neuronWriter: NeuronWriterConfig;
   siteContext: SiteContext;
   optimization: OptimizationSettings;
   advanced: AdvancedSettings;
@@ -64,6 +73,7 @@ interface ConfigState {
   // Actions
   setWordPress: (config: Partial<WordPressConfig>) => void;
   setAI: (config: Partial<AIConfig>) => void;
+  setNeuronWriter: (config: Partial<NeuronWriterConfig>) => void;
   setSiteContext: (context: Partial<SiteContext>) => void;
   setOptimization: (settings: Partial<OptimizationSettings>) => void;
   setAdvanced: (settings: Partial<AdvancedSettings>) => void;
@@ -84,6 +94,11 @@ export const useConfigStore = create<ConfigState>()(
         provider: 'google',
         apiKey: '',
         model: 'gemini-2.5-flash-preview-05-20',
+      },
+      neuronWriter: {
+        enabled: false,
+        apiKey: '',
+        isValidated: false,
       },
       siteContext: {
         organizationName: '',
@@ -120,6 +135,9 @@ export const useConfigStore = create<ConfigState>()(
       
       setAI: (config) =>
         set((state) => ({ ai: { ...state.ai, ...config } })),
+      
+      setNeuronWriter: (config) =>
+        set((state) => ({ neuronWriter: { ...state.neuronWriter, ...config } })),
       
       setSiteContext: (context) =>
         set((state) => ({ siteContext: { ...state.siteContext, ...context } })),

@@ -35,3 +35,9 @@ verify_jwt = false
 
 [functions.validate-content]
 verify_jwt = false
+
+[functions.neuronwriter]
+verify_jwt = false
+
+[functions.serp-analysis]
+verify_jwt = false
