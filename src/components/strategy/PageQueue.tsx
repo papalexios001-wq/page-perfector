@@ -235,8 +235,9 @@ export function PageQueue() {
       return;
     }
 
-    if (!wordpress.isConnected || !wordpress.siteUrl) {
-      toast.error('WordPress not connected', {
+    // Check WordPress config exists (credentials stored from sitemap crawl)
+    if (!wordpress.siteUrl || !wordpress.username || !wordpress.applicationPassword) {
+      toast.error('WordPress not configured', {
         description: 'Go to Configuration tab and connect your WordPress site first.',
       });
       return;
@@ -278,26 +279,43 @@ export function PageQueue() {
   };
 
   const handleOptimizeSingle = async (pageId: string) => {
-    if (!wordpress.isConnected || !wordpress.siteUrl) {
-      toast.error('WordPress not connected');
+    // Check WordPress config exists (credentials stored from sitemap crawl)
+    if (!wordpress.siteUrl || !wordpress.username || !wordpress.applicationPassword) {
+      toast.error('WordPress not configured', {
+        description: 'Go to Configuration tab and connect your WordPress site first.',
+      });
+      return;
+    }
+
+    // Find the page before starting
+    const pageToOptimize = pages.find(p => p.id === pageId);
+    if (!pageToOptimize) {
+      toast.error('Page not found');
       return;
     }
 
     setPages(prev => prev.map(p => p.id === pageId ? { ...p, status: 'optimizing' } : p));
-    toast.info('Starting optimization...');
+    toast.info('Starting optimization...', { description: pageToOptimize.title || pageToOptimize.url });
 
     const { success, optimization } = await optimizeSinglePage(pageId);
+    
+    // Fetch fresh pages data
     await fetchPages();
 
     if (success && optimization) {
-      const page = pages.find(p => p.id === pageId);
-      if (page) {
-        setSelectedPageResult({ page, result: optimization });
-        setShowResultDialog(true);
-      }
-      toast.success('Page optimized successfully!');
+      // Use the stored page reference, update with fresh data
+      setSelectedPageResult({ 
+        page: { ...pageToOptimize, status: 'completed' }, 
+        result: optimization 
+      });
+      setShowResultDialog(true);
+      toast.success('Page optimized successfully!', {
+        description: `Quality score: ${optimization.qualityScore}/100`,
+      });
     } else {
-      toast.error('Optimization failed');
+      toast.error('Optimization failed', {
+        description: 'Check the console for details.',
+      });
     }
   };
 
