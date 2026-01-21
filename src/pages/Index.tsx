@@ -27,6 +27,7 @@ import { SessionStats } from '@/components/analytics/SessionStats';
 import { ScoreDistribution } from '@/components/analytics/ScoreDistribution';
 import { EnhancementBreakdown } from '@/components/analytics/EnhancementBreakdown';
 import { RecentJobs } from '@/components/analytics/RecentJobs';
+import { useAnalyticsSync } from '@/hooks/useAnalyticsSync';
 
 // Connection status component
 function ConnectionStatus() {
@@ -64,8 +65,12 @@ const Index = () => {
   const [activeTab, setActiveTab] = useState('config');
   const pageQueueRef = useRef<PageQueueRef>(null);
   
+  // Sync analytics from database
+  const { syncFromDatabase } = useAnalyticsSync();
+  
   const handleCrawlComplete = () => {
     pageQueueRef.current?.refresh();
+    syncFromDatabase();
   };
 
   return (

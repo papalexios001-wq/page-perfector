@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { 
   List, Search, Filter, Zap, Eye, Trash2, RotateCcw, FileText, 
   ChevronLeft, ChevronRight, RefreshCw, Loader2, CheckCircle2, 
-  XCircle, Upload, Send, AlertTriangle, Info, CheckCheck
+  XCircle, Upload, Send, AlertTriangle, Info, CheckCheck, ExternalLink
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -19,6 +19,7 @@ import { Separator } from '@/components/ui/separator';
 import { StatusBadge } from '@/components/shared/StatusBadge';
 import { ScoreIndicator } from '@/components/shared/ScoreIndicator';
 import { OptimizationProgress, DEFAULT_STEPS, OptimizationStep } from './OptimizationProgress';
+import { ContentPreviewDialog } from './ContentPreviewDialog';
 import { supabase } from '@/integrations/supabase/client';
 import { invokeEdgeFunction } from '@/lib/supabase';
 import { useConfigStore } from '@/stores/config-store';
@@ -51,7 +52,7 @@ interface OptimizationResult {
   metaDescription: string;
   h1: string;
   h2s: string[];
-  optimizedContent?: string; // Full optimized HTML content for publishing
+  optimizedContent?: string;
   contentStrategy: {
     wordCount: number;
     readabilityScore: number;
@@ -59,6 +60,8 @@ interface OptimizationResult {
     lsiKeywords: string[];
   };
   internalLinks: Array<{ anchor: string; target: string; position: number }>;
+  references?: Array<{ title: string; url: string; snippet?: string }>;
+  youtubeVideo?: { title: string; videoId: string; description?: string };
   schema: Record<string, unknown>;
   aiSuggestions: {
     contentGaps: string;
@@ -911,12 +914,21 @@ export const PageQueue = forwardRef<PageQueueRef>(function PageQueue(_props, ref
                               {page.status === 'published' && (
                                 <CheckCheck className="w-4 h-4 text-green-500" />
                               )}
+                              <a
+                                href={page.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-primary hover:underline text-xs"
+                                title="Open live page"
+                              >
+                                <ExternalLink className="w-3 h-3" />
+                              </a>
                               <Button
                                 variant="ghost"
                                 size="icon"
                                 className="h-7 w-7"
-                                title="Preview"
-                                onClick={() => window.open(page.url, '_blank')}
+                                title="Preview Optimized Content"
+                                onClick={() => handleViewResult(page)}
                               >
                                 <Eye className="w-3.5 h-3.5" />
                               </Button>
@@ -995,104 +1007,16 @@ export const PageQueue = forwardRef<PageQueueRef>(function PageQueue(_props, ref
         </CardContent>
       </Card>
 
-      {/* Optimization Result Dialog */}
-      <Dialog open={showResultDialog} onOpenChange={setShowResultDialog}>
-        <DialogContent className="max-w-2xl max-h-[80vh]">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <FileText className="w-5 h-5 text-primary" />
-              Optimization Results
-            </DialogTitle>
-            <DialogDescription>
-              {selectedPageResult?.page.title}
-            </DialogDescription>
-          </DialogHeader>
-          
-          <ScrollArea className="max-h-[50vh] pr-4">
-            {selectedPageResult?.result ? (
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="p-3 rounded-lg bg-muted/50">
-                    <p className="text-xs text-muted-foreground mb-1">Quality Score</p>
-                    <p className="text-2xl font-bold text-primary">{selectedPageResult.result.qualityScore}</p>
-                  </div>
-                  <div className="p-3 rounded-lg bg-muted/50">
-                    <p className="text-xs text-muted-foreground mb-1">Estimated Rank</p>
-                    <p className="text-2xl font-bold">#{selectedPageResult.result.estimatedRankPosition}</p>
-                  </div>
-                </div>
-
-                <Separator />
-
-                <div>
-                  <p className="text-sm font-medium mb-2">Optimized Title</p>
-                  <p className="text-sm p-2 rounded bg-muted/50">{selectedPageResult.result.optimizedTitle}</p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {selectedPageResult.result.optimizedTitle.length} characters
-                  </p>
-                </div>
-
-                <div>
-                  <p className="text-sm font-medium mb-2">Meta Description</p>
-                  <p className="text-sm p-2 rounded bg-muted/50">{selectedPageResult.result.metaDescription}</p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {selectedPageResult.result.metaDescription.length} characters
-                  </p>
-                </div>
-
-                <div>
-                  <p className="text-sm font-medium mb-2">H1 Heading</p>
-                  <p className="text-sm p-2 rounded bg-muted/50">{selectedPageResult.result.h1}</p>
-                </div>
-
-                <div>
-                  <p className="text-sm font-medium mb-2">Subheadings (H2)</p>
-                  <ul className="space-y-1">
-                    {selectedPageResult.result.h2s.map((h2, i) => (
-                      <li key={i} className="text-sm p-2 rounded bg-muted/50">• {h2}</li>
-                    ))}
-                  </ul>
-                </div>
-
-                <div>
-                  <p className="text-sm font-medium mb-2">LSI Keywords</p>
-                  <div className="flex flex-wrap gap-1">
-                    {selectedPageResult.result.contentStrategy.lsiKeywords.map((kw, i) => (
-                      <Badge key={i} variant="secondary">{kw}</Badge>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <p className="text-sm font-medium mb-2">AI Suggestions</p>
-                  <div className="space-y-2 text-sm">
-                    <p className="p-2 rounded bg-muted/50">
-                      <strong>Quick Wins:</strong> {selectedPageResult.result.aiSuggestions.quickWins}
-                    </p>
-                    <p className="p-2 rounded bg-muted/50">
-                      <strong>Content Gaps:</strong> {selectedPageResult.result.aiSuggestions.contentGaps}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <p className="text-muted-foreground text-center py-8">No optimization data available</p>
-            )}
-          </ScrollArea>
-
-          <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setShowResultDialog(false)}>
-              Close
-            </Button>
-            {selectedPageResult?.result && selectedPageResult.page.status !== 'published' && (
-              <Button onClick={handleValidateAndPublish} disabled={isPublishing}>
-                {isPublishing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Send className="w-4 h-4 mr-2" />}
-                Validate & Publish
-              </Button>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Content Preview Dialog - Enterprise Grade */}
+      <ContentPreviewDialog
+        open={showResultDialog}
+        onOpenChange={setShowResultDialog}
+        pageTitle={selectedPageResult?.page.title || ''}
+        pageUrl={selectedPageResult?.page.url || ''}
+        result={selectedPageResult?.result || null}
+        onPublish={selectedPageResult?.page.status !== 'published' ? handleValidateAndPublish : undefined}
+        isPublishing={isPublishing}
+      />
 
       {/* Validation Dialog */}
       <Dialog open={showValidationDialog} onOpenChange={setShowValidationDialog}>

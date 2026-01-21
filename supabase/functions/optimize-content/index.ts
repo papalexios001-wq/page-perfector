@@ -478,6 +478,52 @@ ${siteContextSection}
 - Include Table of Contents: ${advanced.enableToc ? 'Yes (as clickable list)' : 'No'}
 - Include Key Takeaways: ${advanced.enableKeyTakeaways ? 'Yes (5 bullet summary at top)' : 'No'}
 - Include CTAs: ${advanced.enableCtas ? 'Yes (2-3 strategic CTAs throughout)' : 'No'}
+- Include YouTube Video: Yes (ONE highly relevant tutorial/explainer video)
+- Include References Section: Yes (4-6 authoritative external sources at the end)
+
+═══════════════════════════════════════════════════════════════
+🎬 YOUTUBE VIDEO EMBED (REQUIRED!)
+═══════════════════════════════════════════════════════════════
+Include ONE highly relevant YouTube video using this exact HTML format:
+
+<div class="wp-opt-youtube">
+<h3>📺 Recommended Video</h3>
+<iframe width="100%" height="400" src="https://www.youtube.com/embed/VIDEO_ID_HERE" 
+  title="Video Title" frameborder="0" 
+  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+  allowfullscreen loading="lazy"></iframe>
+<p class="video-caption"><em>This video explains the key concepts discussed in this article.</em></p>
+</div>
+
+Choose a real, existing, high-quality YouTube video that:
+- Is from a reputable channel with good production quality
+- Is directly relevant to the topic "${keyword}"
+- Has educational or tutorial value
+- Is reasonably recent (within last 2-3 years if possible)
+
+Place the video embed after the first major section - where it adds the most value.
+
+═══════════════════════════════════════════════════════════════
+📚 REFERENCES SECTION (REQUIRED AT END!)
+═══════════════════════════════════════════════════════════════
+At the VERY END of the article (after FAQs if present), add this section:
+
+<div class="wp-opt-references">
+<h2>📚 References & Further Reading</h2>
+<p>This article draws from the following authoritative sources:</p>
+<ol>
+<li><a href="URL" target="_blank" rel="noopener noreferrer">Source Title</a> — Brief description of what this source covers and why it's relevant.</li>
+<li><a href="URL" target="_blank" rel="noopener noreferrer">Source Title</a> — Brief description.</li>
+... (include 4-6 references total)
+</ol>
+</div>
+
+Use REAL authoritative sources such as:
+- Official documentation and guides
+- Government (.gov) and educational (.edu) sites  
+- Major industry publications (Forbes, HBR, TechCrunch, etc.)
+- Respected research studies and reports
+- Well-known industry blogs and expert resources
 
 ═══════════════════════════════════════════════════════════════
 📤 OUTPUT FORMAT (JSON)
@@ -488,7 +534,7 @@ Return ONLY valid JSON with this structure:
   "metaDescription": "Compelling meta description 150-160 chars with CTA",
   "h1": "Main H1 heading (can differ from title for SEO)",
   "h2s": ["H2 subheading 1", "H2 subheading 2", ...],
-  "optimizedContent": "<article>Full HTML content with ALL the visual boxes, proper heading hierarchy, internal links, FAQs with wp-opt-faq class, etc. MUST include TL;DR box, Key Takeaways box, 3+ Pro Tip boxes, 2+ Stat boxes with citations, 5 internal links, and 2+ CTAs</article>",
+  "optimizedContent": "<article>Full HTML content with ALL the visual boxes, proper heading hierarchy, internal links, FAQs with wp-opt-faq class, YouTube embed with wp-opt-youtube class, References section with wp-opt-references class. MUST include TL;DR box, Key Takeaways box, 3+ Pro Tip boxes, 2+ Stat boxes with citations, 5 internal links, 1 YouTube embed, 4-6 references, and 2+ CTAs</article>",
   "contentStrategy": {
     "wordCount": 2500,
     "readabilityScore": 75,
@@ -500,12 +546,20 @@ Return ONLY valid JSON with this structure:
   "internalLinks": [
     {"anchor": "descriptive anchor text", "target": "https://...", "context": "surrounding sentence"}
   ],
+  "references": [
+    {"title": "Source Title", "url": "https://example.com", "snippet": "Brief description of what this source covers"}
+  ],
+  "youtubeVideo": {
+    "title": "Video Title",
+    "videoId": "abc123XYZ",
+    "description": "Brief description of what viewer will learn"
+  },
   "schema": {
     "@context": "https://schema.org",
     "@graph": [
       {"@type": "Article", ...},
       {"@type": "FAQPage", ...},
-      {"@type": "HowTo", ...if applicable}
+      {"@type": "VideoObject", "name": "...", "thumbnailUrl": "...", "uploadDate": "...", "contentUrl": "https://youtube.com/watch?v=..."}
     ]
   },
   "aiSuggestions": {
@@ -520,8 +574,7 @@ Return ONLY valid JSON with this structure:
   "tableOfContents": ["Section 1", "Section 2"],
   "faqs": [{"question": "...", "answer": "..."}],
   "keyTakeaways": ["Key point 1", "Key point 2"],
-  "stats": [{"stat": "67%", "context": "of users...", "source": "Study Name, 2024"}],
-  "youtubeSearchQuery": "best ${keyword} tutorial guide"
+  "stats": [{"stat": "67%", "context": "of users...", "source": "Study Name, 2024"}]
 }`;
 }
 
