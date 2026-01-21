@@ -41,3 +41,12 @@ verify_jwt = false
 
 [functions.serp-analysis]
 verify_jwt = false
+
+[functions.internal-linking-engine]
+verify_jwt = false
+
+[functions.youtube-discovery]
+verify_jwt = false
+
+[functions.schema-generator]
+verify_jwt = false

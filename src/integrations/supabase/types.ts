@@ -77,12 +77,16 @@ export type Database = {
           created_at: string | null
           current_step: string | null
           error_message: string | null
+          execution_time_ms: number | null
           id: string
+          metadata: Json | null
           page_id: string | null
           progress: number | null
           result: Json | null
+          site_id: string | null
           started_at: string | null
           status: string | null
+          updated_at: string | null
         }
         Insert: {
           ai_cost?: number | null
@@ -91,12 +95,16 @@ export type Database = {
           created_at?: string | null
           current_step?: string | null
           error_message?: string | null
+          execution_time_ms?: number | null
           id?: string
+          metadata?: Json | null
           page_id?: string | null
           progress?: number | null
           result?: Json | null
+          site_id?: string | null
           started_at?: string | null
           status?: string | null
+          updated_at?: string | null
         }
         Update: {
           ai_cost?: number | null
@@ -105,12 +113,16 @@ export type Database = {
           created_at?: string | null
           current_step?: string | null
           error_message?: string | null
+          execution_time_ms?: number | null
           id?: string
+          metadata?: Json | null
           page_id?: string | null
           progress?: number | null
           result?: Json | null
+          site_id?: string | null
           started_at?: string | null
           status?: string | null
+          updated_at?: string | null
         }
         Relationships: [
           {

@@ -250,7 +250,7 @@ async function fetchNeuronWriterRecommendations(
   return null;
 }
 
-// Build optimization prompt
+// Build optimization prompt - SOTA Hormozi/Ferriss Style
 function buildOptimizationPrompt(
   pageTitle: string,
   pageContent: string,
@@ -301,6 +301,7 @@ ${neuronWriterData.competitors?.slice(0, 3).map(c => `- #${c.rank}: ${c.title}`)
 ${internalLinkCandidates.slice(0, 50).map(l => `- "${l.title}" → ${l.url}`).join('\n')}
 
 ⚠️ CRITICAL: Only link to URLs from this list! Do NOT invent URLs.
+REQUIREMENT: Include exactly 5 high-quality internal links with rich, descriptive anchor text.
 ` : '';
 
   const siteContextSection = siteContext ? `
@@ -313,10 +314,23 @@ ${internalLinkCandidates.slice(0, 50).map(l => `- "${l.title}" → ${l.url}`).jo
 - Brand Voice: ${siteContext.brandVoice || 'professional'}
 ` : '';
 
-  return `You are an expert SEO content optimizer. Analyze and rewrite the following content.
+  return `You are a WORLD-CLASS content strategist who writes like Alex Hormozi meets Tim Ferriss.
 
 ═══════════════════════════════════════════════════════════════
-📄 ORIGINAL PAGE
+🎯 YOUR MISSION
+═══════════════════════════════════════════════════════════════
+Create the MOST HELPFUL, conversion-effective, search-dominant content for the keyword "${keyword}".
+
+Your content MUST:
+✅ Be ZERO FLUFF - every sentence delivers value
+✅ Use simple words, short sentences, punchy paragraphs
+✅ Include specific numbers, stats, examples (cite sources!)
+✅ Be scannable with clear visual hierarchy
+✅ Answer the searcher's intent COMPLETELY
+✅ Be human-written quality (no AI-sounding phrases!)
+
+═══════════════════════════════════════════════════════════════
+📄 ORIGINAL PAGE TO OPTIMIZE
 ═══════════════════════════════════════════════════════════════
 Title: ${pageTitle}
 Primary Keyword: ${keyword}
@@ -329,52 +343,149 @@ ${internalLinksSection}
 ${siteContextSection}
 
 ═══════════════════════════════════════════════════════════════
-📋 REQUIREMENTS
+✍️ WRITING STYLE RULES (HORMOZI/FERRISS STYLE)
+═══════════════════════════════════════════════════════════════
+
+1. HOOK IMMEDIATELY
+   - First 2 sentences must grab attention
+   - Use a shocking stat, bold claim, or direct question
+   - Example: "Most businesses lose 67% of leads. Here's why..."
+
+2. ZERO FLUFF TOLERANCE
+   - Delete: "In today's world...", "It's important to note..."
+   - Delete: "As we all know...", "Moving forward..."
+   - Every sentence must teach, prove, or sell
+
+3. USE POWER STRUCTURES
+   - Problem → Agitate → Solve
+   - Here's the truth... → Here's what to do...
+   - The [X] most people miss... → What winners do instead...
+
+4. INCLUDE SPECIFIC PROOF
+   - "3x more conversions" not "improved results"
+   - "Saved 12 hours per week" not "time savings"
+   - Always cite sources for statistics
+
+5. VISUAL BREAKS EVERY 3-4 PARAGRAPHS
+   - Use the custom HTML boxes (see format below)
+   - No walls of plain text!
+
+═══════════════════════════════════════════════════════════════
+🎨 REQUIRED VISUAL COMPONENTS (USE THESE HTML BOXES!)
+═══════════════════════════════════════════════════════════════
+
+1. TL;DR BOX (at the top, after intro):
+<div class="wp-opt-tldr">
+<strong>⚡ TL;DR</strong>
+<p>[2-3 sentence summary of the entire article's value]</p>
+</div>
+
+2. KEY TAKEAWAYS BOX (after TL;DR):
+<div class="wp-opt-takeaways">
+<strong>🎯 Key Takeaways</strong>
+<ul>
+<li>✓ [Actionable takeaway 1]</li>
+<li>✓ [Actionable takeaway 2]</li>
+<li>✓ [Actionable takeaway 3]</li>
+<li>✓ [Actionable takeaway 4]</li>
+<li>✓ [Actionable takeaway 5]</li>
+</ul>
+</div>
+
+3. PRO TIP BOXES (use 3-4 throughout):
+<div class="wp-opt-tip">
+<strong>💡 Pro Tip</strong>
+<p>[Insider knowledge or expert advice]</p>
+</div>
+
+4. WARNING BOXES (use 1-2 for common mistakes):
+<div class="wp-opt-warning">
+<strong>⚠️ Warning</strong>
+<p>[Common mistake and how to avoid it]</p>
+</div>
+
+5. STAT HIGHLIGHT BOXES (use 2-3 with citations):
+<div class="wp-opt-stat">
+<strong>[XX%] of [audience] [do something]</strong>
+<p>Source: [Publication Name, Year]</p>
+</div>
+
+6. EXPERT QUOTE BOXES (use 1-2):
+<div class="wp-opt-quote">
+<blockquote>"[Powerful quote from expert]"</blockquote>
+<cite>— [Expert Name], [Title/Company]</cite>
+</div>
+
+7. FAQ BOXES (use for each FAQ):
+<div class="wp-opt-faq">
+<h3>[Question?]</h3>
+<p>[Comprehensive answer]</p>
+</div>
+
+8. CTA BOXES (use 2-3 strategically):
+<div class="wp-opt-cta">
+<strong>[Compelling CTA headline]</strong>
+<p>[Brief value proposition and call to action]</p>
+</div>
+
+9. INTERNAL LINK FORMAT:
+<a href="[URL]" class="wp-opt-internal">[Rich anchor text - 3-6 words, descriptive]</a>
+
+═══════════════════════════════════════════════════════════════
+📋 CONTENT REQUIREMENTS
 ═══════════════════════════════════════════════════════════════
 - Word count: ${advanced.minWordCount}-${advanced.maxWordCount} words
 - Target quality score: ${advanced.targetScore}/100
-- Include FAQs: ${advanced.enableFaqs ? 'Yes (5-7 FAQs)' : 'No'}
-- Include Schema: ${advanced.enableSchema ? 'Yes (Article + FAQ schema)' : 'No'}
-- Include Internal Links: ${advanced.enableInternalLinks ? 'Yes (8-12 contextual links)' : 'No'}
-- Include Table of Contents: ${advanced.enableToc ? 'Yes' : 'No'}
-- Include Key Takeaways: ${advanced.enableKeyTakeaways ? 'Yes (bullet summary)' : 'No'}
-- Include CTAs: ${advanced.enableCtas ? 'Yes (2-3 strategic CTAs)' : 'No'}
+- Include FAQs: ${advanced.enableFaqs ? 'Yes (5-7 FAQs with comprehensive answers)' : 'No'}
+- Include Schema: ${advanced.enableSchema ? 'Yes (Article + FAQ + HowTo if applicable)' : 'No'}
+- Include Internal Links: ${advanced.enableInternalLinks ? 'Yes (EXACTLY 5 contextual links with rich anchor text)' : 'No'}
+- Include Table of Contents: ${advanced.enableToc ? 'Yes (as clickable list)' : 'No'}
+- Include Key Takeaways: ${advanced.enableKeyTakeaways ? 'Yes (5 bullet summary at top)' : 'No'}
+- Include CTAs: ${advanced.enableCtas ? 'Yes (2-3 strategic CTAs throughout)' : 'No'}
 
 ═══════════════════════════════════════════════════════════════
 📤 OUTPUT FORMAT (JSON)
 ═══════════════════════════════════════════════════════════════
 Return ONLY valid JSON with this structure:
 {
-  "optimizedTitle": "SEO-optimized title under 60 chars",
-  "metaDescription": "Compelling meta description 150-160 chars",
-  "h1": "Main H1 heading",
+  "optimizedTitle": "SEO-optimized title under 60 chars (with power words)",
+  "metaDescription": "Compelling meta description 150-160 chars with CTA",
+  "h1": "Main H1 heading (can differ from title for SEO)",
   "h2s": ["H2 subheading 1", "H2 subheading 2", ...],
-  "optimizedContent": "<article>Full HTML content with proper heading hierarchy, paragraphs, lists, internal links, FAQs, etc.</article>",
+  "optimizedContent": "<article>Full HTML content with ALL the visual boxes, proper heading hierarchy, internal links, FAQs with wp-opt-faq class, etc. MUST include TL;DR box, Key Takeaways box, 3+ Pro Tip boxes, 2+ Stat boxes with citations, 5 internal links, and 2+ CTAs</article>",
   "contentStrategy": {
     "wordCount": 2500,
     "readabilityScore": 75,
     "keywordDensity": 1.5,
-    "lsiKeywords": ["related", "terms", "used"]
+    "lsiKeywords": ["related", "terms", "used"],
+    "powerWords": ["proven", "exclusive", "guaranteed"],
+    "hookStrength": 9
   },
   "internalLinks": [
-    {"anchor": "anchor text", "target": "https://...", "position": 1}
+    {"anchor": "descriptive anchor text", "target": "https://...", "context": "surrounding sentence"}
   ],
   "schema": {
     "@context": "https://schema.org",
-    "@type": "Article",
-    ...
+    "@graph": [
+      {"@type": "Article", ...},
+      {"@type": "FAQPage", ...},
+      {"@type": "HowTo", ...if applicable}
+    ]
   },
   "aiSuggestions": {
     "contentGaps": "Areas that could be expanded",
     "quickWins": "Easy improvements made",
-    "improvements": ["improvement 1", "improvement 2"]
+    "improvements": ["improvement 1", "improvement 2"],
+    "competitorAdvantages": "What makes this better than competitors"
   },
   "qualityScore": 85,
   "estimatedRankPosition": 5,
   "confidenceLevel": 0.8,
   "tableOfContents": ["Section 1", "Section 2"],
   "faqs": [{"question": "...", "answer": "..."}],
-  "keyTakeaways": ["Key point 1", "Key point 2"]
+  "keyTakeaways": ["Key point 1", "Key point 2"],
+  "stats": [{"stat": "67%", "context": "of users...", "source": "Study Name, 2024"}],
+  "youtubeSearchQuery": "best ${keyword} tutorial guide"
 }`;
 }
 
