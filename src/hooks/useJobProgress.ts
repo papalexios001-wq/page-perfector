@@ -33,10 +33,16 @@ export function useJobProgress(options: UseJobProgressOptions = {}) {
   const channelRef = useRef<RealtimeChannel | null>(null);
   const watchedPageIdRef = useRef<string | null>(null);
   const lastUpdateTimeRef = useRef<number>(Date.now());
-  const stalledCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const stalledCheckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const activeJobRef = useRef<JobProgress | null>(null); // Mirror state in ref for interval access
   
   const stalledThreshold = options.stalledThresholdMs ?? DEFAULT_STALLED_THRESHOLD;
   const autoCleanup = options.autoCleanupStalled ?? true;
+  
+  // Keep ref in sync with state
+  useEffect(() => {
+    activeJobRef.current = activeJob;
+  }, [activeJob]);
 
   // Map database step names to UI step indices
   const stepToIndex = useCallback((step: string): number => {
@@ -140,13 +146,8 @@ export function useJobProgress(options: UseJobProgressOptions = {}) {
       stalledCheckIntervalRef.current = setInterval(async () => {
         const timeSinceLastUpdate = Date.now() - lastUpdateTimeRef.current;
         
-        // Get current active job state
-        const currentJob = await new Promise<JobProgress | null>(resolve => {
-          setActiveJob(job => {
-            resolve(job);
-            return job;
-          });
-        });
+        // Read current job from ref (not state setter which causes hook issues)
+        const currentJob = activeJobRef.current;
         
         if (
           currentJob &&
