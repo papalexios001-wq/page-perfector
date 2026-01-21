@@ -988,8 +988,39 @@ serve(async (req) => {
       throw new AppError('No AI provider configured.', 'AI_NOT_CONFIGURED', 500);
     }
 
+    // Verify page exists before creating job (FK constraint)
+    const { data: existingPage, error: pageCheckError } = await supabase
+      .from('pages')
+      .select('id, status')
+      .eq('id', pageId)
+      .single();
+
+    if (pageCheckError || !existingPage) {
+      throw new AppError(
+        'Page not found. It may have been deleted during a sitemap refresh. Please refresh the page list.',
+        'PAGE_NOT_FOUND',
+        404
+      );
+    }
+
+    // Prevent re-optimization of already running jobs
+    if (existingPage.status === 'optimizing') {
+      throw new AppError(
+        'This page is already being optimized. Please wait for the current job to complete.',
+        'ALREADY_OPTIMIZING',
+        409
+      );
+    }
+
     // Update page status immediately
-    await supabase.from('pages').update({ status: 'optimizing' }).eq('id', pageId);
+    const { error: pageUpdateError } = await supabase
+      .from('pages')
+      .update({ status: 'optimizing' })
+      .eq('id', pageId);
+
+    if (pageUpdateError) {
+      logger.warn('Failed to update page status', { error: pageUpdateError.message });
+    }
 
     // Create job record
     const { data: job, error: jobError } = await supabase
@@ -1005,7 +1036,13 @@ serve(async (req) => {
       .single();
 
     if (jobError || !job) {
-      throw new AppError('Failed to create job', 'JOB_CREATE_FAILED', 500);
+      // Revert page status on job creation failure
+      await supabase.from('pages').update({ status: 'pending' }).eq('id', pageId);
+      throw new AppError(
+        `Failed to create job: ${jobError?.message || 'Unknown error'}`,
+        'JOB_CREATE_FAILED',
+        500
+      );
     }
 
     const jobId = job.id;
