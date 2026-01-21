@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, forwardRef, useImperativeHandle } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   List, Search, Filter, Zap, Eye, Trash2, RotateCcw, FileText, 
@@ -91,7 +91,11 @@ interface JobResult {
   result: OptimizationResult | null;
 }
 
-export function PageQueue() {
+export interface PageQueueRef {
+  refresh: () => Promise<void>;
+}
+
+export const PageQueue = forwardRef<PageQueueRef>(function PageQueue(_props, ref) {
   const [pages, setPages] = useState<DBPage[]>([]);
   const [selectedPages, setSelectedPages] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -182,6 +186,11 @@ export function PageQueue() {
       setIsLoading(false);
     }
   };
+
+  // Expose refresh method to parent via ref
+  useImperativeHandle(ref, () => ({
+    refresh: fetchPages
+  }), []);
 
   useEffect(() => {
     fetchPages();
@@ -470,6 +479,16 @@ export function PageQueue() {
       setIsOptimizing(false);
       setOptimizingPageTitle('');
       await stopWatching();
+      
+      // Check if page was deleted (sitemap refresh) - auto-refresh the list
+      if (error?.includes('Page not found') || error?.includes('PAGE_NOT_FOUND')) {
+        toast.error('Page no longer exists', {
+          description: 'The page list has been refreshed. This may happen after a sitemap re-crawl.',
+        });
+        await fetchPages();
+        return;
+      }
+      
       await fetchPages();
       toast.error('Failed to start optimization', {
         description: error || 'Check the console for details.',
@@ -1203,4 +1222,4 @@ export function PageQueue() {
       />
     </>
   );
-}
+});

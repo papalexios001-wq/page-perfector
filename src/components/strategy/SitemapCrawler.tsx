@@ -23,7 +23,11 @@ interface CrawlResult {
   errors?: string[];
 }
 
-export function SitemapCrawler() {
+interface SitemapCrawlerProps {
+  onCrawlComplete?: () => void;
+}
+
+export function SitemapCrawler({ onCrawlComplete }: SitemapCrawlerProps) {
   const { addActivityLog } = usePagesStore();
   const { wordpress } = useConfigStore();
   const [sitemapUrl, setSitemapUrl] = useState('/sitemap.xml');
@@ -127,6 +131,9 @@ export function SitemapCrawler() {
       toast.success(`Sitemap crawl complete!`, {
         description: `${result.pagesAdded} new pages added, ${result.pagesKept} optimized pages kept`,
       });
+      
+      // Notify parent to refresh page list
+      onCrawlComplete?.();
     } else if (result.success && result.pagesAdded === 0) {
       toast.warning('No new pages added', {
         description: result.pagesKept > 0 

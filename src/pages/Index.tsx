@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { Settings, Rocket, BarChart3, Sparkles, CloudOff, CheckCircle2, Globe, Bot } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -18,7 +18,7 @@ import { DashboardMetrics } from '@/components/strategy/DashboardMetrics';
 import { SitemapCrawler } from '@/components/strategy/SitemapCrawler';
 import { QuickOptimize } from '@/components/strategy/QuickOptimize';
 import { BulkMode } from '@/components/strategy/BulkMode';
-import { PageQueue } from '@/components/strategy/PageQueue';
+import { PageQueue, PageQueueRef } from '@/components/strategy/PageQueue';
 import { ActivityLog } from '@/components/strategy/ActivityLog';
 import { SerpIntelligence } from '@/components/strategy/SerpIntelligence';
 
@@ -62,6 +62,11 @@ function ConnectionStatus() {
 
 const Index = () => {
   const [activeTab, setActiveTab] = useState('config');
+  const pageQueueRef = useRef<PageQueueRef>(null);
+  
+  const handleCrawlComplete = () => {
+    pageQueueRef.current?.refresh();
+  };
 
   return (
     <div className="min-h-screen bg-background">
@@ -129,14 +134,14 @@ const Index = () => {
               <DashboardMetrics />
               
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <SitemapCrawler />
+                <SitemapCrawler onCrawlComplete={handleCrawlComplete} />
                 <QuickOptimize />
                 <BulkMode />
               </div>
 
               <SerpIntelligence />
 
-              <PageQueue />
+              <PageQueue ref={pageQueueRef} />
               <ActivityLog />
             </motion.div>
           </TabsContent>
