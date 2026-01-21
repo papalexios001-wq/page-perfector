@@ -10,6 +10,42 @@ import {
   checkRateLimit,
 } from "../_shared/utils.ts";
 
+// Track active jobs for graceful shutdown cleanup
+const activeJobs = new Map<string, { jobId: string; pageId: string; startTime: number }>();
+
+// Register shutdown handler to mark active jobs as failed
+addEventListener('beforeunload', async (ev) => {
+  const reason = (ev as unknown as { detail?: { reason?: string } }).detail?.reason || 'unknown';
+  console.log(`[optimize-content] Shutdown initiated: ${reason}, active jobs: ${activeJobs.size}`);
+  
+  if (activeJobs.size === 0) return;
+  
+  const supabaseUrl = Deno.env.get('SUPABASE_URL');
+  const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  
+  if (!supabaseUrl || !supabaseKey) return;
+  
+  const supabase = createClient(supabaseUrl, supabaseKey);
+  
+  // Mark all active jobs as failed due to shutdown
+  for (const [requestId, { jobId, pageId }] of activeJobs) {
+    try {
+      await supabase.from('jobs').update({
+        status: 'failed',
+        current_step: 'shutdown_interrupted',
+        error_message: `Job interrupted by server shutdown: ${reason}. Please retry.`,
+        completed_at: new Date().toISOString(),
+      }).eq('id', jobId);
+      
+      await supabase.from('pages').update({ status: 'failed' }).eq('id', pageId);
+      
+      console.log(`[optimize-content] Marked job ${jobId} as failed due to shutdown`);
+    } catch (err) {
+      console.error(`[optimize-content] Failed to cleanup job ${jobId}:`, err);
+    }
+  }
+});
+
 type AIProvider = 'google' | 'openai' | 'anthropic' | 'groq' | 'openrouter';
 
 interface AIConfig {
