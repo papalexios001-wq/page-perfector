@@ -122,6 +122,25 @@ export const PageQueue = forwardRef<PageQueueRef>(function PageQueue(_props, ref
   
   const { wordpress, ai, neuronWriter, optimization: optimizationSettings, advanced, siteContext } = useConfigStore();
 
+  const getLiveUrl = useCallback(
+    (pageUrl: string) => {
+      if (!pageUrl) return '';
+      const trimmed = pageUrl.trim();
+      if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed;
+
+      const base = (wordpress.siteUrl || '').trim();
+      if (!base) return trimmed;
+
+      const normalizedBase = base.startsWith('http://') || base.startsWith('https://')
+        ? base.replace(/\/+$/, '')
+        : `https://${base}`.replace(/\/+$/, '');
+
+      const normalizedPath = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+      return `${normalizedBase}${normalizedPath}`;
+    },
+    [wordpress.siteUrl]
+  );
+
   // Real-time job progress hook
   const { 
     activeJob, 
@@ -915,7 +934,7 @@ export const PageQueue = forwardRef<PageQueueRef>(function PageQueue(_props, ref
                                 <CheckCheck className="w-4 h-4 text-green-500" />
                               )}
                               <a
-                                href={page.url}
+                                href={getLiveUrl(page.url)}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="inline-flex items-center gap-1 text-primary hover:underline text-xs"
@@ -1012,7 +1031,7 @@ export const PageQueue = forwardRef<PageQueueRef>(function PageQueue(_props, ref
         open={showResultDialog}
         onOpenChange={setShowResultDialog}
         pageTitle={selectedPageResult?.page.title || ''}
-        pageUrl={selectedPageResult?.page.url || ''}
+        pageUrl={getLiveUrl(selectedPageResult?.page.url || '')}
         result={selectedPageResult?.result || null}
         onPublish={selectedPageResult?.page.status !== 'published' ? handleValidateAndPublish : undefined}
         isPublishing={isPublishing}
