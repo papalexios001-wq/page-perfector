@@ -869,10 +869,22 @@ async function processOptimizationJob(
       .neq('id', pageId)
       .limit(200);
 
+        // CRITICAL: Normalize all internal link URLs to be absolute (fixes broken links)
+    // Use the site URL from WordPress config to ensure proper domain prefix
+    let siteBaseUrl = siteUrl.trim();
+    if (!siteBaseUrl.startsWith('http://') && !siteBaseUrl.startsWith('https://')) {
+      siteBaseUrl = 'https://' + siteBaseUrl;
+    }
+    siteBaseUrl = siteBaseUrl.replace(/\/+$/, ''); // Remove trailing slashes
+
     const internalLinkCandidates: InternalLinkCandidate[] = (allPages || []).map((p: any) => ({
-      url: p.url,
+      // Normalize URL to be absolute - prepend siteBaseUrl if relative
+      url: (p.url && !p.url.startsWith('http://') && !p.url.startsWith('https://')) 
+        ? siteBaseUrl + (p.url.startsWith('/') ? p.url : '/' + p.url)
+        : (p.url || ''),
       slug: p.slug,
       title: p.title,
+      
     }));
 
     const validUrlSet = new Set(internalLinkCandidates.map(l => l.url));
