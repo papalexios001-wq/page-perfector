@@ -131,6 +131,21 @@ interface OptimizeRequest {
   siteContext?: SiteContext;
 }
 
+interface YouTubeVideo {
+  videoId: string;
+  title: string;
+  description: string;
+  embedHtml: string;
+  schema: object;
+}
+
+interface ReferenceSource {
+  title: string;
+  url: string;
+  snippet: string;
+  domain: string;
+}
+
 // Helper: Update job progress in database
 async function updateJobProgress(
   supabase: any,
@@ -199,6 +214,144 @@ function deriveKeyword(title: string, slug: string): string {
   }
   
   return keyword.substring(0, 100);
+}
+
+// Helper: Discover YouTube video using youtube-discovery function
+async function discoverYouTubeVideo(
+  supabaseUrl: string,
+  supabaseKey: string,
+  keyword: string,
+  contentContext: string,
+  logger: Logger
+): Promise<YouTubeVideo | null> {
+  try {
+    logger.info('Discovering YouTube video', { keyword });
+    
+    const response = await fetch(`${supabaseUrl}/functions/v1/youtube-discovery`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${supabaseKey}`,
+      },
+      body: JSON.stringify({
+        keyword: keyword,
+        contentContext: contentContext.substring(0, 500),
+        maxResults: 1,
+        preferTutorials: true,
+        minViews: 5000,
+      }),
+    });
+    
+    if (!response.ok) {
+      logger.warn('YouTube discovery failed', { status: response.status });
+      return null;
+    }
+    
+    const data = await response.json();
+    
+    if (data.success && data.videos && data.videos.length > 0) {
+      const video = data.videos[0];
+      logger.info('YouTube video discovered', { 
+        videoId: video.videoId, 
+        title: video.title,
+        relevanceScore: video.relevanceScore 
+      });
+      return video;
+    }
+    
+    logger.info('No YouTube videos found');
+    return null;
+  } catch (error) {
+    logger.warn('YouTube discovery error', { error: error instanceof Error ? error.message : 'Unknown' });
+    return null;
+  }
+}
+
+// Helper: Find authoritative reference sources using Serper.dev
+async function findReferenceSources(
+  serperApiKey: string,
+  keyword: string,
+  logger: Logger
+): Promise<ReferenceSource[]> {
+  try {
+    logger.info('Finding reference sources', { keyword });
+    
+    // Search for authoritative content about the keyword
+    const searchQueries = [
+      `${keyword} site:.gov OR site:.edu`,
+      `${keyword} research study report`,
+      `${keyword} site:forbes.com OR site:techcrunch.com OR site:hbr.org`,
+    ];
+    
+    const allSources: ReferenceSource[] = [];
+    
+    for (const query of searchQueries) {
+      try {
+        const response = await fetch('https://google.serper.dev/search', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-API-KEY': serperApiKey,
+          },
+          body: JSON.stringify({
+            q: query,
+            num: 5,
+            gl: 'us',
+            hl: 'en',
+          }),
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          const organic = data.organic || [];
+          
+          for (const result of organic) {
+            if (result.link && result.title) {
+              const url = new URL(result.link);
+              const domain = url.hostname.replace('www.', '');
+              
+              // Filter out low-quality domains
+              const excludeDomains = ['youtube.com', 'facebook.com', 'twitter.com', 'instagram.com', 'reddit.com', 'quora.com'];
+              if (excludeDomains.some(d => domain.includes(d))) continue;
+              
+              allSources.push({
+                title: result.title,
+                url: result.link,
+                snippet: result.snippet || '',
+                domain: domain,
+              });
+            }
+          }
+        }
+        
+        // Small delay between queries
+        await new Promise(r => setTimeout(r, 500));
+      } catch (queryError) {
+        logger.warn('Reference search query failed', { query, error: queryError instanceof Error ? queryError.message : 'Unknown' });
+      }
+    }
+    
+    // Deduplicate by URL and prioritize high-authority domains
+    const uniqueSources = new Map<string, ReferenceSource>();
+    const authorityDomains = ['.gov', '.edu', 'forbes.com', 'harvard.edu', 'mit.edu', 'techcrunch.com', 'hbr.org', 'nature.com', 'science.org'];
+    
+    for (const source of allSources) {
+      if (!uniqueSources.has(source.url)) {
+        const isAuthority = authorityDomains.some(d => source.domain.includes(d));
+        if (isAuthority || uniqueSources.size < 10) {
+          uniqueSources.set(source.url, source);
+        }
+      }
+    }
+    
+    const sources = Array.from(uniqueSources.values()).slice(0, 8);
+    logger.info('Found reference sources', { count: sources.length });
+    
+    return sources;
+  } catch (error) {
+    logger.warn('Reference finding error', { error: error instanceof Error ? error.message : 'Unknown' });
+    return [];
+  }
 }
 
 // Helper: Fetch NeuronWriter recommendations
@@ -293,6 +446,8 @@ function buildOptimizationPrompt(
   keyword: string,
   internalLinkCandidates: InternalLinkCandidate[],
   neuronWriterData: NeuronWriterRecommendations | null,
+  youtubeVideo: YouTubeVideo | null,
+  referenceSources: ReferenceSource[],
   advanced: AdvancedSettings,
   siteContext: SiteContext | undefined
 ): string {
@@ -340,6 +495,44 @@ ${internalLinkCandidates.slice(0, 50).map(l => `- "${l.title}" → ${l.url}`).jo
 REQUIREMENT: Include exactly 5 high-quality internal links with rich, descriptive anchor text.
 ` : '';
 
+  const youtubeSection = youtubeVideo ? `
+═══════════════════════════════════════════════════════════════
+🎬 VERIFIED YOUTUBE VIDEO (USE THIS EXACT EMBED!)
+═══════════════════════════════════════════════════════════════
+Video ID: ${youtubeVideo.videoId}
+Title: ${youtubeVideo.title}
+Description: ${youtubeVideo.description}
+
+✅ EMBED HTML (USE THIS EXACTLY AS PROVIDED):
+${youtubeVideo.embedHtml}
+
+CRITICAL: Use this EXACT HTML - it's guaranteed to work. Place it after the first major section.
+` : `
+═══════════════════════════════════════════════════════════════
+⚠️ NO YOUTUBE VIDEO FOUND
+═══════════════════════════════════════════════════════════════
+No suitable video was found. DO NOT include a YouTube embed section.
+Instead, add a text tip suggesting users search YouTube for "${keyword} tutorial".
+`;
+
+  const referencesSection = referenceSources.length > 0 ? `
+═══════════════════════════════════════════════════════════════
+📚 VERIFIED REFERENCE SOURCES (USE THESE EXACT URLs!)
+═══════════════════════════════════════════════════════════════
+${referenceSources.map((ref, idx) => `${idx + 1}. "${ref.title}"
+   URL: ${ref.url}
+   Domain: ${ref.domain}
+   Context: ${ref.snippet.substring(0, 150)}...`).join('\n\n')}
+
+✅ CRITICAL: Use ONLY these exact URLs in your References section.
+These are verified, high-authority sources. Include 4-6 of these at the end of the article.
+` : `
+═══════════════════════════════════════════════════════════════
+⚠️ NO REFERENCE SOURCES PROVIDED
+═══════════════════════════════════════════════════════════════
+Find and cite 4-6 authoritative sources yourself (.gov, .edu, major publications).
+`;
+
   const siteContextSection = siteContext ? `
 ═══════════════════════════════════════════════════════════════
 🏢 SITE CONTEXT
@@ -376,6 +569,8 @@ ${pageContent.substring(0, 15000)}
 
 ${neuronWriterSection}
 ${internalLinksSection}
+${youtubeSection}
+${referencesSection}
 ${siteContextSection}
 
 ═══════════════════════════════════════════════════════════════
@@ -472,109 +667,62 @@ ${siteContextSection}
 ═══════════════════════════════════════════════════════════════
 - Word count: ${advanced.minWordCount}-${advanced.maxWordCount} words
 - Target quality score: ${advanced.targetScore}/100
-- Include FAQs: ${advanced.enableFaqs ? 'Yes (5-7 FAQs with comprehensive answers)' : 'No'}
-- Include Schema: ${advanced.enableSchema ? 'Yes (Article + FAQ + HowTo if applicable)' : 'No'}
+- Include FAQs: ${advanced.enableFaqs ? 'Yes (5-7 FAQs with comprehensive answers in wp-opt-faq boxes)' : 'No'}
+- Include Schema: ${advanced.enableSchema ? 'Yes (Article + FAQ + VideoObject if video provided)' : 'No'}
 - Include Internal Links: ${advanced.enableInternalLinks ? 'Yes (EXACTLY 5 contextual links with rich anchor text)' : 'No'}
 - Include Table of Contents: ${advanced.enableToc ? 'Yes (as clickable list)' : 'No'}
-- Include Key Takeaways: ${advanced.enableKeyTakeaways ? 'Yes (5 bullet summary at top)' : 'No'}
-- Include CTAs: ${advanced.enableCtas ? 'Yes (2-3 strategic CTAs throughout)' : 'No'}
-- Include YouTube Video: Yes (ONE highly relevant tutorial/explainer video)
-- Include References Section: Yes (4-6 authoritative external sources at the end)
+- Include Key Takeaways: ${advanced.enableKeyTakeaways ? 'Yes (5 bullet summary at top in wp-opt-takeaways box)' : 'No'}
+- Include CTAs: ${advanced.enableCtas ? 'Yes (2-3 strategic CTAs in wp-opt-cta boxes)' : 'No'}
+- Include YouTube Video: ${youtubeVideo ? 'Yes (USE THE PROVIDED EMBED HTML EXACTLY!)' : 'No'}
+- Include References Section: Yes (4-6 sources from provided list or authoritative alternatives)
 
 ═══════════════════════════════════════════════════════════════
-🎬 YOUTUBE VIDEO EMBED (REQUIRED!)
+📚 REFERENCES SECTION FORMAT (REQUIRED AT END!)
 ═══════════════════════════════════════════════════════════════
-Include ONE highly relevant YouTube video using this exact HTML format:
-
-<div class="wp-opt-youtube">
-<h3>📺 Recommended Video</h3>
-<iframe width="100%" height="400" src="https://www.youtube.com/embed/VIDEO_ID_HERE" 
-  title="Video Title" frameborder="0" 
-  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
-  allowfullscreen loading="lazy"></iframe>
-<p class="video-caption"><em>This video explains the key concepts discussed in this article.</em></p>
-</div>
-
-Choose a real, existing, high-quality YouTube video that:
-- Is from a reputable channel with good production quality
-- Is directly relevant to the topic "${keyword}"
-- Has educational or tutorial value
-- Is reasonably recent (within last 2-3 years if possible)
-
-Place the video embed after the first major section - where it adds the most value.
-
-═══════════════════════════════════════════════════════════════
-📚 REFERENCES SECTION (REQUIRED AT END!)
-═══════════════════════════════════════════════════════════════
-At the VERY END of the article (after FAQs if present), add this section:
+At the VERY END of the article (after FAQs if present), add:
 
 <div class="wp-opt-references">
 <h2>📚 References & Further Reading</h2>
 <p>This article draws from the following authoritative sources:</p>
 <ol>
-<li><a href="URL" target="_blank" rel="noopener noreferrer">Source Title</a> — Brief description of what this source covers and why it's relevant.</li>
-<li><a href="URL" target="_blank" rel="noopener noreferrer">Source Title</a> — Brief description.</li>
-... (include 4-6 references total)
+<li><a href="[EXACT_URL_FROM_PROVIDED_LIST]" target="_blank" rel="noopener noreferrer">[Source Title]</a> — [Brief 1-2 sentence description of relevance]</li>
+<li><a href="[URL]" target="_blank" rel="noopener noreferrer">[Title]</a> — [Description]</li>
+... (include 4-6 total)
 </ol>
 </div>
 
-Use REAL authoritative sources such as:
-- Official documentation and guides
-- Government (.gov) and educational (.edu) sites  
-- Major industry publications (Forbes, HBR, TechCrunch, etc.)
-- Respected research studies and reports
-- Well-known industry blogs and expert resources
+${referenceSources.length > 0 ? '✅ USE THE PROVIDED VERIFIED SOURCES ABOVE!' : '⚠️ Find authoritative .gov, .edu, or major publication sources.'}
 
 ═══════════════════════════════════════════════════════════════
 📤 OUTPUT FORMAT (JSON)
 ═══════════════════════════════════════════════════════════════
-Return ONLY valid JSON with this structure:
+Return ONLY valid JSON:
 {
-  "optimizedTitle": "SEO-optimized title under 60 chars (with power words)",
-  "metaDescription": "Compelling meta description 150-160 chars with CTA",
-  "h1": "Main H1 heading (can differ from title for SEO)",
-  "h2s": ["H2 subheading 1", "H2 subheading 2", ...],
-  "optimizedContent": "<article>Full HTML content with ALL the visual boxes, proper heading hierarchy, internal links, FAQs with wp-opt-faq class, YouTube embed with wp-opt-youtube class, References section with wp-opt-references class. MUST include TL;DR box, Key Takeaways box, 3+ Pro Tip boxes, 2+ Stat boxes with citations, 5 internal links, 1 YouTube embed, 4-6 references, and 2+ CTAs</article>",
+  "optimizedTitle": "SEO title under 60 chars with power words",
+  "metaDescription": "Compelling 150-160 char meta with CTA",
+  "h1": "Main H1 heading",
+  "h2s": ["H2 1", "H2 2", ...],
+  "optimizedContent": "<article>Full HTML with ALL boxes, ${youtubeVideo ? 'YouTube embed,' : ''} internal links, FAQs, References section</article>",
   "contentStrategy": {
     "wordCount": 2500,
     "readabilityScore": 75,
     "keywordDensity": 1.5,
-    "lsiKeywords": ["related", "terms", "used"],
-    "powerWords": ["proven", "exclusive", "guaranteed"],
+    "lsiKeywords": ["term1", "term2"],
+    "powerWords": ["proven", "exclusive"],
     "hookStrength": 9
   },
-  "internalLinks": [
-    {"anchor": "descriptive anchor text", "target": "https://...", "context": "surrounding sentence"}
-  ],
-  "references": [
-    {"title": "Source Title", "url": "https://example.com", "snippet": "Brief description of what this source covers"}
-  ],
-  "youtubeVideo": {
-    "title": "Video Title",
-    "videoId": "abc123XYZ",
-    "description": "Brief description of what viewer will learn"
-  },
-  "schema": {
-    "@context": "https://schema.org",
-    "@graph": [
-      {"@type": "Article", ...},
-      {"@type": "FAQPage", ...},
-      {"@type": "VideoObject", "name": "...", "thumbnailUrl": "...", "uploadDate": "...", "contentUrl": "https://youtube.com/watch?v=..."}
-    ]
-  },
-  "aiSuggestions": {
-    "contentGaps": "Areas that could be expanded",
-    "quickWins": "Easy improvements made",
-    "improvements": ["improvement 1", "improvement 2"],
-    "competitorAdvantages": "What makes this better than competitors"
-  },
+  "internalLinks": [{"anchor": "text", "target": "url", "context": "sentence"}],
+  "references": [{"title": "Source", "url": "https://...", "snippet": "description"}],
+  ${youtubeVideo ? `"youtubeVideo": {"title": "${youtubeVideo.title}", "videoId": "${youtubeVideo.videoId}", "description": "${youtubeVideo.description}"},` : ''}
+  "schema": {"@context": "https://schema.org", "@graph": [...]},
+  "aiSuggestions": {"contentGaps": "...", "quickWins": "...", "improvements": [], "competitorAdvantages": "..."},
   "qualityScore": 85,
   "estimatedRankPosition": 5,
   "confidenceLevel": 0.8,
   "tableOfContents": ["Section 1", "Section 2"],
   "faqs": [{"question": "...", "answer": "..."}],
-  "keyTakeaways": ["Key point 1", "Key point 2"],
-  "stats": [{"stat": "67%", "context": "of users...", "source": "Study Name, 2024"}]
+  "keyTakeaways": ["Point 1", "Point 2"],
+  "stats": [{"stat": "67%", "context": "...", "source": "..."}]
 }`;
 }
 
@@ -670,6 +818,7 @@ async function processOptimizationJob(
   supabase: any,
   supabaseUrl: string,
   supabaseKey: string,
+  serperApiKey: string | undefined,
   lovableApiKey: string | undefined,
   jobId: string,
   pageId: string,
@@ -790,7 +939,26 @@ async function processOptimizationJob(
       );
     }
 
-    await updateJobProgress(supabase, jobId, 'analyzing_content', 40, logger);
+    // Discover YouTube video
+    await updateJobProgress(supabase, jobId, 'discovering_youtube_video', 35, logger);
+    const youtubeVideo = await discoverYouTubeVideo(
+      supabaseUrl,
+      supabaseKey,
+      effectiveKeyword,
+      pageContent,
+      logger
+    );
+
+    // Find reference sources
+    await updateJobProgress(supabase, jobId, 'finding_references', 38, logger);
+    let referenceSources: ReferenceSource[] = [];
+    if (serperApiKey) {
+      referenceSources = await findReferenceSources(serperApiKey, effectiveKeyword, logger);
+    } else {
+      logger.warn('SERPER_API_KEY not configured - references will be AI-generated');
+    }
+
+    await updateJobProgress(supabase, jobId, 'analyzing_content', 42, logger);
 
     // Build prompt
     const userPrompt = buildOptimizationPrompt(
@@ -799,6 +967,8 @@ async function processOptimizationJob(
       effectiveKeyword,
       internalLinkCandidates,
       neuronWriterData,
+      youtubeVideo,
+      referenceSources,
       effectiveAdvanced,
       siteContext
     );
@@ -981,10 +1151,20 @@ async function processOptimizationJob(
       throw new Error(`Content too short (${contentLength} chars)`);
     }
 
+    // Add video schema if video was provided
+    if (youtubeVideo && optimization.schema) {
+      const schema = optimization.schema as any;
+      if (schema['@graph'] && Array.isArray(schema['@graph'])) {
+        schema['@graph'].push(youtubeVideo.schema);
+      }
+    }
+
     logger.info('Content validated', { 
       contentLength, 
       wordCount: (optimization.contentStrategy as Record<string, unknown>)?.wordCount,
       qualityScore: optimization.qualityScore,
+      hasYouTubeVideo: !!youtubeVideo,
+      referencesFound: referenceSources.length,
     });
 
     // Mark job completed
@@ -1018,17 +1198,23 @@ async function processOptimizationJob(
       page_id: pageId,
       job_id: jobId,
       type: 'success',
-      message: `Optimized: ${(optimization.contentStrategy as Record<string, unknown>)?.wordCount || 0} words, score ${optimization.qualityScore}`,
+      message: `Optimized: ${(optimization.contentStrategy as Record<string, unknown>)?.wordCount || 0} words, score ${optimization.qualityScore}${youtubeVideo ? ', video included' : ''}`,
       details: {
         qualityScore: optimization.qualityScore,
         wordCount: (optimization.contentStrategy as Record<string, unknown>)?.wordCount,
         internalLinks: (optimization.internalLinks as unknown[])?.length,
         usedNeuronWriter: !!neuronWriterData,
+        youtubeVideoId: youtubeVideo?.videoId,
+        referencesCount: referenceSources.length,
         requestId: logger.getRequestId(),
       },
     });
 
-    logger.info('Optimization complete', { qualityScore: optimization.qualityScore });
+    logger.info('Optimization complete', { 
+      qualityScore: optimization.qualityScore,
+      youtubeIncluded: !!youtubeVideo,
+      referencesIncluded: referenceSources.length,
+    });
 
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -1048,6 +1234,7 @@ serve(async (req) => {
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
   const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+  const serperApiKey = Deno.env.get('SERPER_API_KEY');
   const lovableApiKey = Deno.env.get('LOVABLE_API_KEY');
   
   const supabase = createClient(supabaseUrl, supabaseKey);
@@ -1059,6 +1246,11 @@ serve(async (req) => {
     validateRequired(body as unknown as Record<string, unknown>, ['pageId', 'siteUrl', 'username', 'applicationPassword']);
 
     logger.info('Received optimization request', { pageId, siteUrl });
+
+    // Check if SERPER_API_KEY is configured
+    if (!serperApiKey) {
+      logger.warn('SERPER_API_KEY not configured - YouTube videos and references will be AI-generated (less reliable)');
+    }
 
     // Rate limiting
     const rateLimitKey = `optimize:${siteUrl}`;
@@ -1135,7 +1327,7 @@ serve(async (req) => {
     }
 
     const jobId = job.id;
-    logger.info('Job created, starting background processing', { jobId });
+    logger.info('Job created, starting background processing', { jobId, hasSerperKey: !!serperApiKey });
 
     // ========================================================
     // RESPOND IMMEDIATELY - Run actual work in background
@@ -1146,6 +1338,7 @@ serve(async (req) => {
         supabase,
         supabaseUrl,
         supabaseKey,
+        serperApiKey,
         lovableApiKey,
         jobId,
         pageId,
@@ -1160,7 +1353,11 @@ serve(async (req) => {
         success: true, 
         message: 'Optimization job started', 
         jobId,
-        requestId: logger.getRequestId() 
+        requestId: logger.getRequestId(),
+        features: {
+          youtubeDiscovery: !!serperApiKey,
+          referenceFinding: !!serperApiKey,
+        }
       }),
       { status: 202, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
