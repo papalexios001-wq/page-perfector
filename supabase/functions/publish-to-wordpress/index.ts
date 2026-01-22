@@ -28,6 +28,7 @@ interface PublishRequest {
     schema?: Record<string, unknown>;
     internalLinks?: Array<{ anchor: string; target: string; position: number }>;
         references?: Array<{ title: string; url: string; snippet?: string }>;
+          youtubeVideos?: Array<{ videoId: string; title?: string }>;
   };
   options?: {
     preserveCategories?: boolean;
