@@ -279,9 +279,10 @@ serve(async (req) => {
     if (optimization.references && optimization.references.length > 0) {
       // Check if content already has references section
       // Check if content has a proper references section with HTML links
-      const hasProperReferencesWithLinks = updatedContent.includes('wp-opt-references') || 
-        (updatedContent.includes('References') && updatedContent.includes('<a href'));
-      if (!hasProperReferencesWithLinks) { 
+      // ONLY check for our specific marker class - don't skip based on any '<a href' in content
+      // This ensures we always inject verified references even if AI generated some text
+      const hasOurReferencesSection = updatedContent.includes('wp-opt-references');
+      if (!hasOurReferencesSection) {
                const refsHtml = optimization.references.map((ref, idx) => 
           `<li><a href="${ref.url}" target="_blank" rel="noopener noreferrer">${ref.title}</a>${ref.snippet ? ` — ${ref.snippet}` : ''}</li>`
         ).join('\n');
