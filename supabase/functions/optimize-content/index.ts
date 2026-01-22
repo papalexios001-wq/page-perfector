@@ -1163,6 +1163,19 @@ async function processOptimizationJob(
       }
     }
 
+
+        // CRITICAL: Ensure references have verified URLs from serper.dev
+    // Override AI-generated references with verified sources to ensure links work
+    if (referenceSources.length > 0) {
+      optimization.references = referenceSources.map(ref => ({
+        title: ref.title,
+        url: ref.url,
+        snippet: ref.snippet
+      }));
+      logger.info('Set verified references from serper.dev', { count: referenceSources.length });
+    } else if (!optimization.references || optimization.references.length === 0) {
+      logger.warn('No references available - AI did not generate any and serper.dev not configured');
+    }
     logger.info('Content validated', { 
       contentLength, 
       wordCount: (optimization.contentStrategy as Record<string, unknown>)?.wordCount,
