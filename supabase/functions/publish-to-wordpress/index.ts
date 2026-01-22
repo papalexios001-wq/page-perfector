@@ -275,6 +275,24 @@ serve(async (req) => {
       }
     }
 
+  // CRITICAL: Inject YouTube videos if not already present
+  if (optimization.youtubeVideos && optimization.youtubeVideos.length > 0) {
+    // Check if content already has YouTube embeds
+    const hasYoutubeEmbeds = updatedContent.includes('youtube.com/embed') || updatedContent.includes('youtu.be');
+    if (!hasYoutubeEmbeds) {
+      const youtubeHtml = optimization.youtubeVideos.map((video: { videoId: string; title?: string }) =>
+        `<div class="wp-opt-youtube-video" style="margin: 20px 0;"><iframe width="560" height="315" src="https://www.youtube.com/embed/${video.videoId}" title="${video.title || 'YouTube video'}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe></div>`
+      ).join('\n');
+      // Insert YouTube videos before the first heading or at the start of content
+      const h2Match = updatedContent.match(/<h2[^>]*>/i);
+      if (h2Match && h2Match.index !== undefined) {
+        updatedContent = updatedContent.slice(0, h2Match.index) + youtubeHtml + '\n' + updatedContent.slice(h2Match.index);
+      } else {
+        updatedContent = youtubeHtml + '\n\n' + updatedContent;
+      }
+    }
+  }
+
     // CRITICAL: Inject references section if not already present
     if (optimization.references && optimization.references.length > 0) {
       // Check if content already has references section
