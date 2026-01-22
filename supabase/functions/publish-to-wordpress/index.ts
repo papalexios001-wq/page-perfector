@@ -278,8 +278,11 @@ serve(async (req) => {
     // CRITICAL: Inject references section if not already present
     if (optimization.references && optimization.references.length > 0) {
       // Check if content already has references section
-      if (!updatedContent.includes('References') && !updatedContent.includes('Further Reading')) {
-        const refsHtml = optimization.references.map((ref, idx) => 
+      // Check if content has a proper references section with HTML links
+      const hasProperReferencesWithLinks = updatedContent.includes('wp-opt-references') || 
+        (updatedContent.includes('References') && updatedContent.includes('<a href'));
+      if (!hasProperReferencesWithLinks) { 
+               const refsHtml = optimization.references.map((ref, idx) => 
           `<li><a href="${ref.url}" target="_blank" rel="noopener noreferrer">${ref.title}</a>${ref.snippet ? ` — ${ref.snippet}` : ''}</li>`
         ).join('\n');
         updatedContent += `\n\n<div class="wp-opt-references"><h2>📚 References & Further Reading</h2><p>This article draws from the following authoritative sources:</p><ol>${refsHtml}</ol></div>`;
