@@ -52,6 +52,7 @@ interface AIConfig {
   provider: AIProvider;
   apiKey: string;
   model: string;
+    serperApiKey?: string;
 }
 
 interface AdvancedSettings {
@@ -1234,14 +1235,17 @@ serve(async (req) => {
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
   const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-  const serperApiKey = Deno.env.get('SERPER_API_KEY');
-  const lovableApiKey = Deno.env.get('LOVABLE_API_KEY');
+  const envSerperApiKey = Deno.env.get('SERPER_API_KEY'); 
+    const lovableApiKey = Deno.env.get('LOVABLE_API_KEY');
   
   const supabase = createClient(supabaseUrl, supabaseKey);
 
   try {
     const body: OptimizeRequest = await req.json();
     const { pageId, siteUrl, username, applicationPassword } = body;
+
+        // Use serperApiKey from request body (aiConfig) if provided, otherwise fallback to env var
+    const serperApiKey = body.aiConfig?.serperApiKey || envSerperApiKey;
 
     validateRequired(body as unknown as Record<string, unknown>, ['pageId', 'siteUrl', 'username', 'applicationPassword']);
 
