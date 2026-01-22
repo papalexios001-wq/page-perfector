@@ -27,6 +27,7 @@ interface PublishRequest {
     optimizedContent?: string;
     schema?: Record<string, unknown>;
     internalLinks?: Array<{ anchor: string; target: string; position: number }>;
+        references?: Array<{ title: string; url: string; snippet?: string }>;
   };
   options?: {
     preserveCategories?: boolean;
@@ -262,6 +263,28 @@ serve(async (req) => {
             }
           }
         }
+
+            // CRITICAL: Inject internal links into content if not already present
+    if (optimization.internalLinks && optimization.internalLinks.length > 0) {
+      // Check if content already has internal links section
+      if (!updatedContent.includes('Related articles:') && !updatedContent.includes('Related Articles')) {
+        const linksHtml = optimization.internalLinks.map(link => 
+          `<a href="${link.target}">${link.anchor}</a>`
+        ).join(', ');
+        updatedContent += `\n\n<div class="wp-opt-related-articles"><p><strong>Related Articles:</strong> ${linksHtml}</p></div>`;
+      }
+    }
+
+    // CRITICAL: Inject references section if not already present
+    if (optimization.references && optimization.references.length > 0) {
+      // Check if content already has references section
+      if (!updatedContent.includes('References') && !updatedContent.includes('Further Reading')) {
+        const refsHtml = optimization.references.map((ref, idx) => 
+          `<li><a href="${ref.url}" target="_blank" rel="noopener noreferrer">${ref.title}</a>${ref.snippet ? ` — ${ref.snippet}` : ''}</li>`
+        ).join('\n');
+        updatedContent += `\n\n<div class="wp-opt-references"><h2>📚 References & Further Reading</h2><p>This article draws from the following authoritative sources:</p><ol>${refsHtml}</ol></div>`;
+      }
+    }
 
         // Add schema markup
         if (optimization.schema) {
