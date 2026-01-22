@@ -24,6 +24,7 @@ interface YouTubeDiscoveryRequest {
   maxResults?: number;
   preferTutorials?: boolean;
   minViews?: number;
+    serperApiKey?: string;
 }
 
 interface VideoResult {
@@ -326,10 +327,9 @@ serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
-  
-  const serperApiKey = Deno.env.get('SERPER_API_KEY');
-  const youtubeApiKey = Deno.env.get('YOUTUBE_API_KEY');
-  
+
+    const youtubeApiKey = Deno.env.get('YOUTUBE_API_KEY');
+  const envSerperApiKey = Deno.env.get('SERPER_API_KEY');  
   try {
     const body: YouTubeDiscoveryRequest = await req.json();
     const { 
@@ -339,6 +339,9 @@ serve(async (req) => {
       preferTutorials = true,
       minViews = 1000 
     } = body;
+
+        // Use serperApiKey from request body if provided, otherwise fallback to env var
+    const serperApiKey = body.serperApiKey || envSerperApiKey;
     
     validateRequired(body as unknown as Record<string, unknown>, ['keyword']);
     
