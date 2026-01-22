@@ -345,6 +345,7 @@ export const PageQueue = forwardRef<PageQueueRef>(function PageQueue(_props, ref
         optimizedContent: optimization.optimizedContent, // CRITICAL: Include full content
         schema: optimization.schema,
         internalLinks: optimization.internalLinks,
+                  references: optimization.references,
       },
       options: {
         preserveCategories: optimizationSettings.preserveCategories,
