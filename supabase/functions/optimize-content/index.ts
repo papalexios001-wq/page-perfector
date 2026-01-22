@@ -223,6 +223,7 @@ async function discoverYouTubeVideo(
   supabaseKey: string,
   keyword: string,
   contentContext: string,
+    serperApiKey: string | undefined,
   logger: Logger
 ): Promise<YouTubeVideo | null> {
   try {
@@ -238,6 +239,7 @@ async function discoverYouTubeVideo(
         keyword: keyword,
         contentContext: contentContext.substring(0, 500),
         maxResults: 1,
+                  serperApiKey: serperApiKey,
         preferTutorials: true,
         minViews: 5000,
       }),
@@ -947,6 +949,7 @@ async function processOptimizationJob(
       supabaseKey,
       effectiveKeyword,
       pageContent,
+              serperApiKey,
       logger
     );
 
