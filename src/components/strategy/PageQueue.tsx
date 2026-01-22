@@ -247,6 +247,7 @@ export const PageQueue = forwardRef<PageQueueRef>(function PageQueue(_props, ref
       provider: ai.provider,
       apiKey: ai.apiKey,
       model: ai.model,
+            serperApiKey: ai.serperApiKey,
     } : undefined;
 
     // Build NeuronWriter configuration if enabled
