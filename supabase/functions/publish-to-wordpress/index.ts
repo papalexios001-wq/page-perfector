@@ -254,28 +254,48 @@ serve(async (req) => {
             updatedContent = updatedContent.replace(/<h1[^>]*>.*?<\/h1>/gi, `<h1>${optimization.h1}</h1>`);
           }
           
-          if (optimization.internalLinks && optimization.internalLinks.length > 0) {
-            const linksHtml = optimization.internalLinks.map(link => 
-              `<a href="${link.target}">${link.anchor}</a>`
-            ).join(', ');
-            
-            if (!updatedContent.includes('Related articles:')) {
-              updatedContent += `\n\n<p><strong>Related articles:</strong> ${linksHtml}</p>`;
-            }
-          }
-        }
+          // CRITICAL: Inject internal links into content using contextual rich anchor text
+  if (optimization.internalLinks && optimization.internalLinks.length > 0) {
+    // Sort internal links by position (descending) to avoid index shifting when replacing
+    const sortedLinks = [...optimization.internalLinks].sort((a, b) => {
+      const posA = a.position !== undefined ? a.position : Infinity;
+      const posB = b.position !== undefined ? b.position : Infinity;
+      return posB - posA; // Descending order
+    });
 
-            // CRITICAL: Inject internal links into content if not already present
-    if (optimization.internalLinks && optimization.internalLinks.length > 0) {
-      // Check if content already has internal links section
-      if (!updatedContent.includes('Related articles:') && !updatedContent.includes('Related Articles')) {
-        const linksHtml = optimization.internalLinks.map(link => 
-          `<a href="${link.target}">${link.anchor}</a>`
-        ).join(', ');
-        updatedContent += `\n\n<div class="wp-opt-related-articles"><p><strong>Related Articles:</strong> ${linksHtml}</p></div>`;
+    for (const link of sortedLinks) {
+      if (!link.anchor || !link.target) continue;
+      
+      // Skip if the link already exists in the content
+      if (updatedContent.includes(`href="${link.target}"`)) continue;
+      
+      // Create the hyperlink with the rich anchor text
+      const linkHtml = `<a href="${link.target}">${link.anchor}</a>`;
+      
+      // Find the anchor text in the content and replace the first occurrence
+      // Use case-insensitive search to find the anchor text
+      const anchorRegex = new RegExp(`(?<!<a[^>]*>)\\b(${link.anchor.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')})\\b(?![^<]*<\\/a>)`, 'i');
+      const match = updatedContent.match(anchorRegex);
+      
+      if (match && match.index !== undefined) {
+        // Replace the matched text with the hyperlink
+        updatedContent = updatedContent.slice(0, match.index) + linkHtml + updatedContent.slice(match.index + match[0].length);
+      } else if (link.position !== undefined) {
+        // If anchor text not found but position is specified, insert at position
+        // Find the nth paragraph or heading to insert the link
+        const paragraphs = updatedContent.match(/<\\/p>|<\\/h[1-6]>/gi) || [];
+        if (link.position < paragraphs.length) {
+          let insertIndex = 0;
+          for (let i = 0; i <= link.position && i < paragraphs.length; i++) {
+            insertIndex = updatedContent.indexOf(paragraphs[i], insertIndex) + paragraphs[i].length;
+          }
+          // Insert a contextual sentence with the link
+          const contextSentence = `\n<p>For more information, see ${linkHtml}.</p>`;
+          updatedContent = updatedContent.slice(0, insertIndex) + contextSentence + updatedContent.slice(insertIndex);
+        }
       }
     }
-
+  }
   // CRITICAL: Inject YouTube videos if not already present
   if (optimization.youtubeVideos && optimization.youtubeVideos.length > 0) {
     // Check if content already has YouTube embeds
