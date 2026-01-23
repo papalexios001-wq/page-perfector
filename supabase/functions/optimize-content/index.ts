@@ -52,7 +52,7 @@ interface AIConfig {
   provider: AIProvider;
   apiKey: string;
   model: string;
-    serperApiKey?: string;
+  serperApiKey?: string;
 }
 
 interface AdvancedSettings {
@@ -130,6 +130,22 @@ interface OptimizeRequest {
   neuronWriter?: NeuronWriterConfig;
   advanced?: AdvancedSettings;
   siteContext?: SiteContext;
+  serpData?: SerpData;
+}
+
+interface SerpData {
+  organic?: Array<{
+    title: string;
+    link: string;
+    snippet: string;
+    position: number;
+  }>;
+  peopleAlsoAsk?: Array<{
+    question: string;
+    snippet: string;
+    link: string;
+  }>;
+  relatedSearches?: string[];
 }
 
 interface YouTubeVideo {
@@ -146,6 +162,63 @@ interface ReferenceSource {
   snippet: string;
   domain: string;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SOTA ENHANCED SYSTEM PROMPT - E-E-A-T OPTIMIZED
+// ═══════════════════════════════════════════════════════════════════════════════
+const OPTIMIZATION_PROMPT = `You are an ELITE SEO content strategist and writer with expertise in:
+- Google's E-E-A-T guidelines (Experience, Expertise, Authoritativeness, Trust)
+- NLP and semantic search optimization
+- AI Overview optimization for Google SGE/Gemini
+- Conversion-focused copywriting
+
+CRITICAL QUALITY REQUIREMENTS:
+
+1. **UNIQUE INSIGHTS**: Never produce generic content. Every paragraph MUST contain:
+   - Specific data points, statistics, or examples
+   - Unique perspectives not found in top 10 SERP results
+   - Expert-level depth that demonstrates first-hand experience
+
+2. **ENTITY OPTIMIZATION**: 
+   - Identify and naturally incorporate ALL relevant entities (people, places, concepts)
+   - Use entity variations and synonyms throughout
+   - Create semantic clusters around the primary keyword
+
+3. **CONTENT STRUCTURE FOR AI VISIBILITY**:
+   - Lead with a direct answer in the first 50 words (for featured snippets)
+   - Include a TL;DR section at the top
+   - Use "What is", "How to", "Why" patterns for AI extraction
+   - Structure paragraphs as: Claim → Evidence → Insight
+
+4. **READABILITY EXCELLENCE**:
+   - Flesch-Kincaid Grade Level: 8-10 (accessible but authoritative)
+   - Sentences: Mix of short (8-12 words) and medium (15-20 words)
+   - NO fluff phrases: "In today's world", "It's important to note", "When it comes to"
+   - Active voice mandatory
+
+5. **SEMANTIC RICHNESS**:
+   - Include LSI keywords naturally (minimum 15 related terms)
+   - Answer ALL "People Also Ask" questions from SERP data
+   - Create content clusters with clear topic hierarchies
+
+6. **TRUST SIGNALS**:
+   - Reference authoritative sources (studies, experts, official docs)
+   - Include specific numbers, dates, and verifiable facts
+   - Add expert quotes or cite industry authorities
+
+7. **FEATURED SNIPPET OPTIMIZATION**:
+   - Include definition paragraphs (40-60 words, starts with "[Keyword] is...")
+   - Use numbered lists for process/how-to content
+   - Create comparison tables where relevant
+   - Answer questions directly in the first sentence of each section
+
+8. **AI OVERVIEW OPTIMIZATION**:
+   - Structure content with clear question-answer patterns
+   - Use schema-friendly formatting (lists, tables, clear hierarchies)
+   - Include comprehensive coverage of subtopics
+   - Provide definitive, quotable statements
+
+Always return valid JSON with the exact structure requested.`;
 
 // Helper: Update job progress in database
 async function updateJobProgress(
@@ -223,7 +296,7 @@ async function discoverYouTubeVideo(
   supabaseKey: string,
   keyword: string,
   contentContext: string,
-    serperApiKey: string | undefined,
+  serperApiKey: string | undefined,
   logger: Logger
 ): Promise<YouTubeVideo | null> {
   try {
@@ -239,7 +312,7 @@ async function discoverYouTubeVideo(
         keyword: keyword,
         contentContext: contentContext.substring(0, 500),
         maxResults: 1,
-                  serperApiKey: serperApiKey,
+        serperApiKey: serperApiKey,
         preferTutorials: true,
         minViews: 5000,
       }),
@@ -442,7 +515,76 @@ async function fetchNeuronWriterRecommendations(
   return null;
 }
 
-// Build optimization prompt - SOTA Hormozi/Ferriss Style
+// ═══════════════════════════════════════════════════════════════════════════════
+// SOTA COMPETITIVE INTELLIGENCE BUILDER
+// ═══════════════════════════════════════════════════════════════════════════════
+function buildCompetitorIntelligence(serpData: SerpData | undefined, keyword: string): string {
+  if (!serpData?.organic?.length) {
+    return `
+═══════════════════════════════════════════════════════════════
+⚠️ NO SERP DATA AVAILABLE
+═══════════════════════════════════════════════════════════════
+No competitor analysis available. Focus on creating comprehensive, 
+authoritative content that would naturally rank for "${keyword}".
+`;
+  }
+  
+  const competitorInsights = serpData.organic.slice(0, 5).map((result, i) => 
+    `[Rank ${i + 1}] "${result.title}"
+     URL: ${result.link}
+     Key angle: ${result.snippet}`
+  ).join('\n\n');
+  
+  const paaQuestions = serpData.peopleAlsoAsk?.map((paa) => 
+    `   • ${paa.question}`
+  ).join('\n') || '   None found';
+  
+  const relatedTerms = serpData.relatedSearches?.slice(0, 15).join(', ') || 'None found';
+  
+  // Analyze competitor patterns
+  const titles = serpData.organic.slice(0, 5).map(r => r.title.toLowerCase());
+  const hasNumbers = titles.filter(t => /\d+/.test(t)).length;
+  const hasYear = titles.filter(t => /202[4-6]/.test(t)).length;
+  const hasHowTo = titles.filter(t => t.includes('how to')).length;
+  const hasList = titles.filter(t => /\d+\s*(best|top|ways|tips|steps)/.test(t)).length;
+  
+  const patternAnalysis = `
+COMPETITOR TITLE PATTERNS:
+   • ${hasNumbers}/5 use numbers in title
+   • ${hasYear}/5 include current year
+   • ${hasHowTo}/5 are "How to" guides
+   • ${hasList}/5 are listicles`;
+
+  return `
+═══════════════════════════════════════════════════════════════
+🔍 COMPETITIVE INTELLIGENCE (CRITICAL - MUST OUTPERFORM THESE!)
+═══════════════════════════════════════════════════════════════
+
+TOP 5 RANKING PAGES TO BEAT:
+${competitorInsights}
+
+${patternAnalysis}
+
+PEOPLE ALSO ASK (Answer ALL of these in your content):
+${paaQuestions}
+
+RELATED SEARCHES / LSI KEYWORDS (Incorporate naturally throughout):
+${relatedTerms}
+
+═══════════════════════════════════════════════════════════════
+🎯 DIFFERENTIATION MANDATE
+═══════════════════════════════════════════════════════════════
+Your content MUST provide value BEYOND what these top results offer:
+1. Include unique data, statistics, or case studies they lack
+2. Address content gaps - what questions do they NOT answer?
+3. Provide more actionable, specific advice
+4. Use better visual formatting (tables, boxes, lists)
+5. Include expert quotes or original insights
+6. Be more comprehensive while remaining scannable
+═══════════════════════════════════════════════════════════════`;
+}
+
+// Build optimization prompt - SOTA Hormozi/Ferriss Style with Competitive Intelligence
 function buildOptimizationPrompt(
   pageTitle: string,
   pageContent: string,
@@ -452,8 +594,12 @@ function buildOptimizationPrompt(
   youtubeVideo: YouTubeVideo | null,
   referenceSources: ReferenceSource[],
   advanced: AdvancedSettings,
-  siteContext: SiteContext | undefined
+  siteContext: SiteContext | undefined,
+  serpData: SerpData | undefined
 ): string {
+  // Build competitive intelligence section
+  const competitorIntelligence = buildCompetitorIntelligence(serpData, keyword);
+
   const neuronWriterSection = neuronWriterData?.status === 'ready' ? `
 ═══════════════════════════════════════════════════════════════
 🧠 NEURONWRITER SEO INTELLIGENCE (USE THIS DATA!)
@@ -548,6 +694,8 @@ Find and cite 4-6 authoritative sources yourself (.gov, .edu, major publications
 
   return `You are a WORLD-CLASS content strategist who writes like Alex Hormozi meets Tim Ferriss.
 
+${competitorIntelligence}
+
 ═══════════════════════════════════════════════════════════════
 🎯 YOUR MISSION
 ═══════════════════════════════════════════════════════════════
@@ -560,6 +708,7 @@ Your content MUST:
 ✅ Be scannable with clear visual hierarchy
 ✅ Answer the searcher's intent COMPLETELY
 ✅ Be human-written quality (no AI-sounding phrases!)
+✅ OUTPERFORM all competitors listed above
 
 ═══════════════════════════════════════════════════════════════
 📄 ORIGINAL PAGE TO OPTIMIZE
@@ -588,6 +737,8 @@ ${siteContextSection}
 2. ZERO FLUFF TOLERANCE
    - Delete: "In today's world...", "It's important to note..."
    - Delete: "As we all know...", "Moving forward..."
+   - Delete: "When it comes to...", "At the end of the day..."
+   - Delete: "Needless to say...", "The fact of the matter is..."
    - Every sentence must teach, prove, or sell
 
 3. USE POWER STRUCTURES
@@ -787,6 +938,124 @@ function validateInternalLinks(content: string, validUrlSet: Set<string>, logger
   return result;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// SOTA POST-PROCESSING QUALITY ENHANCEMENT
+// ═══════════════════════════════════════════════════════════════════════════════
+function enhanceContentQuality(content: string, keyword: string, logger: Logger): string {
+  if (!content) return content;
+  
+  let enhanced = content;
+  let fluffRemoved = 0;
+  
+  // Comprehensive list of fluff phrases to remove
+  const fluffPatterns = [
+    // Generic openers
+    /In today's (?:world|digital age|fast-paced environment|modern world|society)[,.]?\s*/gi,
+    /In this day and age[,.]?\s*/gi,
+    /In the (?:current|modern|digital) (?:landscape|era|age)[,.]?\s*/gi,
+    
+    // Weak qualifiers
+    /It's (?:important|crucial|essential|vital|critical|worth noting|interesting|notable) to (?:note|understand|remember|mention|point out|realize|recognize) that\s*/gi,
+    /It (?:should|must|needs to) be (?:noted|mentioned|pointed out|emphasized|stressed) that\s*/gi,
+    /It goes without saying (?:that\s*)?/gi,
+    
+    // Filler transitions
+    /When it comes to\s*/gi,
+    /At the end of the day[,.]?\s*/gi,
+    /In order to\s*/gi,
+    /The fact of the matter is[,.]?\s*/gi,
+    /Needless to say[,.]?\s*/gi,
+    /As you (?:may|might|probably) (?:know|have heard|be aware)[,.]?\s*/gi,
+    /As (?:we all|everyone) know[s]?[,.]?\s*/gi,
+    /For all intents and purposes[,.]?\s*/gi,
+    /At this point in time[,.]?\s*/gi,
+    /First and foremost[,.]?\s*/gi,
+    /Last but not least[,.]?\s*/gi,
+    /All things considered[,.]?\s*/gi,
+    /By and large[,.]?\s*/gi,
+    /More often than not[,.]?\s*/gi,
+    
+    // Weak conclusions
+    /In conclusion[,.]?\s*/gi,
+    /To (?:sum up|summarize|conclude|wrap up)[,.]?\s*/gi,
+    /All in all[,.]?\s*/gi,
+    /To put it simply[,.]?\s*/gi,
+    /Simply put[,.]?\s*/gi,
+    /The bottom line is[,.]?\s*/gi,
+    
+    // Hedging language
+    /(?:I|We) (?:think|believe|feel) that\s*/gi,
+    /In my (?:opinion|view|experience)[,.]?\s*/gi,
+    /It (?:seems|appears) (?:that|like)\s*/gi,
+    /(?:Basically|Essentially|Fundamentally)[,.]?\s*/gi,
+    /(?:Honestly|Frankly|Truthfully) speaking[,.]?\s*/gi,
+    
+    // Redundant phrases
+    /(?:Very|Really|Extremely|Incredibly|Absolutely) (?:unique|important|essential|crucial)/gi,
+    /Each and every\s*/gi,
+    /One of the most\s*/gi,
+    /The vast majority of\s*/gi,
+    /A large number of\s*/gi,
+    /Due to the fact that\s*/gi,
+    /In spite of the fact that\s*/gi,
+    /For the purpose of\s*/gi,
+    /In the event that\s*/gi,
+    /With regard to\s*/gi,
+    /In reference to\s*/gi,
+    /Pertaining to\s*/gi,
+  ];
+  
+  fluffPatterns.forEach(pattern => {
+    const before = enhanced.length;
+    enhanced = enhanced.replace(pattern, '');
+    if (enhanced.length < before) fluffRemoved++;
+  });
+  
+  // Fix double spaces created by removals
+  enhanced = enhanced.replace(/\s{2,}/g, ' ');
+  enhanced = enhanced.replace(/\s+([.,;:!?])/g, '$1');
+  enhanced = enhanced.replace(/\.\s*\./g, '.');
+  
+  // Ensure keyword appears in first 100 characters (for featured snippets)
+  const first150 = enhanced.substring(0, 150).toLowerCase();
+  const keywordLower = keyword.toLowerCase();
+  if (!first150.includes(keywordLower)) {
+    logger.warn('Primary keyword missing from opening - content may not rank optimally', { keyword });
+  }
+  
+  // Check for TL;DR presence
+  const hasQuickSummary = enhanced.toLowerCase().includes('tl;dr') || 
+                          enhanced.toLowerCase().includes('tldr') ||
+                          enhanced.toLowerCase().includes('key takeaway') ||
+                          enhanced.includes('wp-opt-tldr') ||
+                          enhanced.includes('wp-opt-takeaways');
+  
+  if (!hasQuickSummary) {
+    logger.warn('No TL;DR or Key Takeaways section found - adding may improve engagement');
+  }
+  
+  // Verify minimum visual elements
+  const tipBoxes = (enhanced.match(/wp-opt-tip/g) || []).length;
+  const statBoxes = (enhanced.match(/wp-opt-stat/g) || []).length;
+  const ctaBoxes = (enhanced.match(/wp-opt-cta/g) || []).length;
+  
+  if (tipBoxes < 2) {
+    logger.warn('Fewer than 2 Pro Tip boxes - consider adding more for engagement');
+  }
+  
+  if (fluffRemoved > 0) {
+    logger.info('Content quality enhanced', { 
+      fluffPhrasesRemoved: fluffRemoved,
+      tipBoxes,
+      statBoxes,
+      ctaBoxes,
+      hasQuickSummary
+    });
+  }
+  
+  return enhanced;
+}
+
 // JSON repair helpers
 const escapeNewlinesInJsonStrings = (s: string): string => {
   let inString = false;
@@ -869,7 +1138,7 @@ async function processOptimizationJob(
       .neq('id', pageId)
       .limit(200);
 
-        // CRITICAL: Normalize all internal link URLs to be absolute (fixes broken links)
+    // CRITICAL: Normalize all internal link URLs to be absolute (fixes broken links)
     // Use the site URL from WordPress config to ensure proper domain prefix
     let siteBaseUrl = siteUrl.trim();
     if (!siteBaseUrl.startsWith('http://') && !siteBaseUrl.startsWith('https://')) {
@@ -884,7 +1153,6 @@ async function processOptimizationJob(
         : (p.url || ''),
       slug: p.slug,
       title: p.title,
-      
     }));
 
     const validUrlSet = new Set(internalLinkCandidates.map(l => l.url));
@@ -937,6 +1205,46 @@ async function processOptimizationJob(
     const effectiveKeyword = targetKeyword || deriveKeyword(pageTitle, pageData.slug);
     logger.info('Using keyword', { keyword: effectiveKeyword });
 
+    // Fetch SERP data for competitive intelligence
+    await updateJobProgress(supabase, jobId, 'analyzing_serp', 25, logger);
+    
+    let serpData: SerpData | undefined;
+    if (serperApiKey) {
+      try {
+        const serpResponse = await fetch(`${supabaseUrl}/functions/v1/serp-analysis`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${supabaseKey}`,
+          },
+          body: JSON.stringify({
+            query: effectiveKeyword,
+            gl: request.region || 'us',
+            hl: language || 'en',
+            serperApiKey: serperApiKey,
+          }),
+        });
+        
+        if (serpResponse.ok) {
+          const serpResult = await serpResponse.json();
+          if (serpResult.success) {
+            serpData = {
+              organic: serpResult.organic,
+              peopleAlsoAsk: serpResult.peopleAlsoAsk,
+              relatedSearches: serpResult.relatedSearches,
+            };
+            logger.info('SERP data fetched for competitive intelligence', { 
+              organicResults: serpData.organic?.length || 0,
+              paaQuestions: serpData.peopleAlsoAsk?.length || 0,
+              relatedSearches: serpData.relatedSearches?.length || 0
+            });
+          }
+        }
+      } catch (serpError) {
+        logger.warn('Could not fetch SERP data', { error: serpError instanceof Error ? serpError.message : 'Unknown' });
+      }
+    }
+
     // Fetch NeuronWriter recommendations
     await updateJobProgress(supabase, jobId, 'fetching_neuronwriter', 30, logger);
     
@@ -961,7 +1269,7 @@ async function processOptimizationJob(
       supabaseKey,
       effectiveKeyword,
       pageContent,
-              serperApiKey,
+      serperApiKey,
       logger
     );
 
@@ -976,7 +1284,7 @@ async function processOptimizationJob(
 
     await updateJobProgress(supabase, jobId, 'analyzing_content', 42, logger);
 
-    // Build prompt
+    // Build prompt with competitive intelligence
     const userPrompt = buildOptimizationPrompt(
       pageTitle,
       pageContent,
@@ -986,14 +1294,13 @@ async function processOptimizationJob(
       youtubeVideo,
       referenceSources,
       effectiveAdvanced,
-      siteContext
+      siteContext,
+      serpData
     );
-
-    const OPTIMIZATION_PROMPT = `You are an expert SEO content optimizer. You analyze content and rewrite it to maximize search rankings while maintaining readability and user engagement. Always return valid JSON.`;
 
     await updateJobProgress(supabase, jobId, 'generating_content', 50, logger);
 
-    // Build AI request
+    // Build AI request with SOTA parameters
     const messages = [
       { role: 'system', content: OPTIMIZATION_PROMPT },
       { role: 'user', content: userPrompt },
@@ -1016,7 +1323,10 @@ async function processOptimizationJob(
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 contents: [{ parts: [{ text: `${OPTIMIZATION_PROMPT}\n\n${userPrompt}` }] }],
-                generationConfig: { temperature: 0.7, maxOutputTokens: 32000 },
+                generationConfig: { 
+                  temperature: 0.3,  // SOTA: Lower temperature for more focused output
+                  maxOutputTokens: 32000 
+                },
               }),
             };
 
@@ -1024,21 +1334,43 @@ async function processOptimizationJob(
             return {
               url: 'https://api.openai.com/v1/chat/completions',
               headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-              body: JSON.stringify({ model, messages, temperature: 0.7, max_tokens: 32000 }),
+              body: JSON.stringify({ 
+                model, 
+                messages, 
+                temperature: 0.3,           // SOTA: Lower temperature for factual accuracy
+                top_p: 0.9,                 // SOTA: Nucleus sampling for coherence
+                frequency_penalty: 0.5,     // SOTA: Reduce repetition
+                presence_penalty: 0.3,      // SOTA: Encourage topic diversity
+                max_tokens: 32000 
+              }),
             };
 
           case 'anthropic':
             return {
               url: 'https://api.anthropic.com/v1/messages',
               headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-              body: JSON.stringify({ model, system: OPTIMIZATION_PROMPT, messages: [{ role: 'user', content: userPrompt }], max_tokens: 32000 }),
+              body: JSON.stringify({ 
+                model, 
+                system: OPTIMIZATION_PROMPT, 
+                messages: [{ role: 'user', content: userPrompt }], 
+                max_tokens: 32000,
+                temperature: 0.3  // SOTA: Lower temperature
+              }),
             };
 
           case 'groq':
             return {
               url: 'https://api.groq.com/openai/v1/chat/completions',
               headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-              body: JSON.stringify({ model, messages, temperature: 0.7, max_tokens: 32000 }),
+              body: JSON.stringify({ 
+                model, 
+                messages, 
+                temperature: 0.3,           // SOTA: Lower temperature
+                top_p: 0.9,
+                frequency_penalty: 0.5,
+                presence_penalty: 0.3,
+                max_tokens: 32000 
+              }),
             };
 
           case 'openrouter':
@@ -1050,7 +1382,15 @@ async function processOptimizationJob(
                 'HTTP-Referer': 'https://wp-optimizer-pro.lovable.app',
                 'X-Title': 'WP Optimizer Pro',
               },
-              body: JSON.stringify({ model, messages, temperature: 0.7, max_tokens: 32000 }),
+              body: JSON.stringify({ 
+                model, 
+                messages, 
+                temperature: 0.3,           // SOTA: Lower temperature
+                top_p: 0.9,
+                frequency_penalty: 0.5,
+                presence_penalty: 0.3,
+                max_tokens: 32000 
+              }),
             };
 
           default:
@@ -1058,10 +1398,19 @@ async function processOptimizationJob(
         }
       }
 
+      // Default Lovable gateway with SOTA parameters
       return {
         url: 'https://ai.gateway.lovable.dev/v1/chat/completions',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${lovableApiKey}` },
-        body: JSON.stringify({ model: 'google/gemini-2.5-flash', messages, temperature: 0.7, max_tokens: 32000 }),
+        body: JSON.stringify({ 
+          model: 'google/gemini-2.5-flash', 
+          messages, 
+          temperature: 0.3,           // SOTA: Lower temperature
+          top_p: 0.9,
+          frequency_penalty: 0.5,
+          presence_penalty: 0.3,
+          max_tokens: 32000 
+        }),
       };
     };
 
@@ -1155,11 +1504,19 @@ async function processOptimizationJob(
       }
     }
 
-    await updateJobProgress(supabase, jobId, 'validating_content', 90, logger);
+    await updateJobProgress(supabase, jobId, 'validating_content', 85, logger);
 
-    // Post-process content
+    // Post-process content: Convert markdown and validate links
     optimization.optimizedContent = convertMarkdownToHtml(optimization.optimizedContent as string);
     optimization.optimizedContent = validateInternalLinks(optimization.optimizedContent as string, validUrlSet, logger);
+
+    // SOTA: Apply quality enhancement post-processing
+    await updateJobProgress(supabase, jobId, 'enhancing_quality', 90, logger);
+    optimization.optimizedContent = enhanceContentQuality(
+      optimization.optimizedContent as string, 
+      effectiveKeyword, 
+      logger
+    );
 
     // Validate content length
     const contentLength = (optimization.optimizedContent as string)?.length || 0;
@@ -1175,8 +1532,7 @@ async function processOptimizationJob(
       }
     }
 
-
-        // CRITICAL: Ensure references have verified URLs from serper.dev
+    // CRITICAL: Ensure references have verified URLs from serper.dev
     // Override AI-generated references with verified sources to ensure links work
     if (referenceSources.length > 0) {
       optimization.references = referenceSources.map(ref => ({
@@ -1185,15 +1541,26 @@ async function processOptimizationJob(
         snippet: ref.snippet
       }));
       logger.info('Set verified references from serper.dev', { count: referenceSources.length });
-    } else if (!optimization.references || optimization.references.length === 0) {
+    } else if (!optimization.references || (optimization.references as unknown[]).length === 0) {
       logger.warn('No references available - AI did not generate any and serper.dev not configured');
     }
-    logger.info('Content validated', { 
+
+    // Add competitive intelligence metadata
+    if (serpData) {
+      optimization.competitiveIntelligence = {
+        analyzedCompetitors: serpData.organic?.length || 0,
+        paaQuestionsFound: serpData.peopleAlsoAsk?.length || 0,
+        relatedSearchesFound: serpData.relatedSearches?.length || 0,
+      };
+    }
+
+    logger.info('Content validated and enhanced', { 
       contentLength, 
       wordCount: (optimization.contentStrategy as Record<string, unknown>)?.wordCount,
       qualityScore: optimization.qualityScore,
       hasYouTubeVideo: !!youtubeVideo,
       referencesFound: referenceSources.length,
+      hasCompetitiveIntelligence: !!serpData,
     });
 
     // Mark job completed
@@ -1227,7 +1594,7 @@ async function processOptimizationJob(
       page_id: pageId,
       job_id: jobId,
       type: 'success',
-      message: `Optimized: ${(optimization.contentStrategy as Record<string, unknown>)?.wordCount || 0} words, score ${optimization.qualityScore}${youtubeVideo ? ', video included' : ''}`,
+      message: `Optimized: ${(optimization.contentStrategy as Record<string, unknown>)?.wordCount || 0} words, score ${optimization.qualityScore}${youtubeVideo ? ', video included' : ''}${serpData ? ', competitor analysis applied' : ''}`,
       details: {
         qualityScore: optimization.qualityScore,
         wordCount: (optimization.contentStrategy as Record<string, unknown>)?.wordCount,
@@ -1235,6 +1602,7 @@ async function processOptimizationJob(
         usedNeuronWriter: !!neuronWriterData,
         youtubeVideoId: youtubeVideo?.videoId,
         referencesCount: referenceSources.length,
+        competitorsAnalyzed: serpData?.organic?.length || 0,
         requestId: logger.getRequestId(),
       },
     });
@@ -1243,6 +1611,7 @@ async function processOptimizationJob(
       qualityScore: optimization.qualityScore,
       youtubeIncluded: !!youtubeVideo,
       referencesIncluded: referenceSources.length,
+      competitiveIntelligenceApplied: !!serpData,
     });
 
   } catch (error) {
@@ -1264,7 +1633,7 @@ serve(async (req) => {
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
   const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
   const envSerperApiKey = Deno.env.get('SERPER_API_KEY'); 
-    const lovableApiKey = Deno.env.get('LOVABLE_API_KEY');
+  const lovableApiKey = Deno.env.get('LOVABLE_API_KEY');
   
   const supabase = createClient(supabaseUrl, supabaseKey);
 
@@ -1272,7 +1641,7 @@ serve(async (req) => {
     const body: OptimizeRequest = await req.json();
     const { pageId, siteUrl, username, applicationPassword } = body;
 
-        // Use serperApiKey from request body (aiConfig) if provided, otherwise fallback to env var
+    // Use serperApiKey from request body (aiConfig) if provided, otherwise fallback to env var
     const serperApiKey = body.aiConfig?.serperApiKey || envSerperApiKey;
 
     validateRequired(body as unknown as Record<string, unknown>, ['pageId', 'siteUrl', 'username', 'applicationPassword']);
@@ -1281,7 +1650,7 @@ serve(async (req) => {
 
     // Check if SERPER_API_KEY is configured
     if (!serperApiKey) {
-      logger.warn('SERPER_API_KEY not configured - YouTube videos and references will be AI-generated (less reliable)');
+      logger.warn('SERPER_API_KEY not configured - YouTube videos, references, and competitive intelligence will be limited');
     }
 
     // Rate limiting
@@ -1359,7 +1728,17 @@ serve(async (req) => {
     }
 
     const jobId = job.id;
-    logger.info('Job created, starting background processing', { jobId, hasSerperKey: !!serperApiKey });
+    logger.info('Job created, starting background processing', { 
+      jobId, 
+      hasSerperKey: !!serperApiKey,
+      features: {
+        competitiveIntelligence: !!serperApiKey,
+        youtubeDiscovery: !!serperApiKey,
+        referenceFinding: !!serperApiKey,
+        sotaPrompt: true,
+        qualityEnhancement: true,
+      }
+    });
 
     // ========================================================
     // RESPOND IMMEDIATELY - Run actual work in background
@@ -1383,12 +1762,16 @@ serve(async (req) => {
     return new Response(
       JSON.stringify({ 
         success: true, 
-        message: 'Optimization job started', 
+        message: 'Optimization job started with SOTA enhancements', 
         jobId,
         requestId: logger.getRequestId(),
         features: {
+          sotaPrompt: true,
+          competitiveIntelligence: !!serperApiKey,
           youtubeDiscovery: !!serperApiKey,
           referenceFinding: !!serperApiKey,
+          qualityEnhancement: true,
+          lowTemperature: true,
         }
       }),
       { status: 202, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
