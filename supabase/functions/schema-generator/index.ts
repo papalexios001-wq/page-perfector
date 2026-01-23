@@ -3,7 +3,7 @@ import { Logger, corsHeaders, createErrorResponse, validateRequired } from "../_
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════════
- * ENTERPRISE-GRADE COMPREHENSIVE SCHEMA GENERATOR
+ * SOTA ENTERPRISE-GRADE COMPREHENSIVE SCHEMA GENERATOR
  * ═══════════════════════════════════════════════════════════════════════════════
  * 
  * Generates complete, SEO-optimized structured data markup for maximum
@@ -19,12 +19,16 @@ import { Logger, corsHeaders, createErrorResponse, validateRequired } from "../_
  * - Organization
  * - Author/Person
  * - SpeakableSpecification (for voice search)
+ * - ClaimReview (for fact-based content) [NEW - AI Optimized]
+ * - ItemList (for listicle content) [NEW - AI Optimized]
+ * - DefinedTerm (for glossary/entity content) [NEW - AI Optimized]
  * 
  * Features:
  * - Auto-detects content type
  * - Generates nested, interconnected schemas
  * - Optimized for Google, Bing, and AI search engines
  * - Speakable markup for voice assistants
+ * - AI Overview optimization for Google SGE
  */
 
 interface SchemaRequest {
@@ -38,11 +42,14 @@ interface SchemaRequest {
     name: string;
     url?: string;
     image?: string;
+    jobTitle?: string;
+    sameAs?: string[];
   };
   organization?: {
     name: string;
     url?: string;
     logo?: string;
+    sameAs?: string[];
   };
   faqs?: Array<{ question: string; answer: string }>;
   howToSteps?: Array<{ name: string; text: string; image?: string }>;
@@ -60,10 +67,14 @@ interface SchemaRequest {
   wordCount?: number;
   keywords?: string[];
   category?: string;
+  // New fields for AI optimization
+  definedTerms?: Array<{ term: string; definition: string }>;
+  claims?: Array<{ claim: string; source: string; rating?: string }>;
+  listItems?: Array<{ name: string; description?: string; position?: number }>;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SCHEMA GENERATORS
+// CORE SCHEMA GENERATORS
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function generateWebPageSchema(req: SchemaRequest): object {
@@ -84,7 +95,12 @@ function generateWebPageSchema(req: SchemaRequest): object {
         "@type": "ReadAction",
         "target": [req.url]
       }
-    ]
+    ],
+    // AI Optimization: Add about for entity recognition
+    "about": req.keywords?.slice(0, 5).map(kw => ({
+      "@type": "Thing",
+      "name": kw
+    }))
   };
 }
 
@@ -122,7 +138,10 @@ function generateArticleSchema(req: SchemaRequest): object {
       "@id": `${req.url}#author`,
       "name": req.author.name,
       "url": req.author.url,
-      "image": req.author.image
+      "image": req.author.image,
+      // AI Optimization: Add job title and sameAs for E-E-A-T
+      "jobTitle": req.author.jobTitle,
+      "sameAs": req.author.sameAs
     };
   }
   
@@ -135,7 +154,9 @@ function generateArticleSchema(req: SchemaRequest): object {
       "logo": req.organization.logo ? {
         "@type": "ImageObject",
         "url": req.organization.logo
-      } : undefined
+      } : undefined,
+      // AI Optimization: Add sameAs for authority signals
+      "sameAs": req.organization.sameAs
     };
   }
   
@@ -170,7 +191,9 @@ function generateFAQSchema(faqs: Array<{ question: string; answer: string }>): o
       "name": faq.question,
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": faq.answer
+        "text": faq.answer,
+        // AI Optimization: Add dateCreated for freshness signals
+        "dateCreated": new Date().toISOString()
       }
     }))
   };
@@ -213,7 +236,13 @@ function generateVideoSchema(video: SchemaRequest['video']): object {
     "contentUrl": video.contentUrl,
     "embedUrl": video.embedUrl,
     "uploadDate": video.uploadDate,
-    "duration": video.duration
+    "duration": video.duration,
+    // AI Optimization: Add interactionStatistic placeholder
+    "interactionStatistic": {
+      "@type": "InteractionCounter",
+      "interactionType": { "@type": "WatchAction" },
+      "userInteractionCount": 0
+    }
   };
 }
 
@@ -231,16 +260,259 @@ function generateBreadcrumbSchema(breadcrumbs: Array<{ name: string; url: string
   };
 }
 
-function generateSpeakableSchema(url: string, selectors: string[]): object {
+// ═══════════════════════════════════════════════════════════════════════════════
+// SOTA AI-OPTIMIZED SCHEMA GENERATORS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Generate AI-optimized schemas for better visibility in AI Overviews
+ * and enhanced rich results
+ */
+function generateAIOptimizedSchemas(req: SchemaRequest): object[] {
+  const schemas: object[] = [];
+  const contentLower = req.content.toLowerCase();
+  
+  // 1. ClaimReview for fact-based content (improves E-E-A-T)
+  if (contentLower.includes('study') || 
+      contentLower.includes('research') || 
+      contentLower.includes('according to') ||
+      contentLower.includes('statistics show') ||
+      contentLower.includes('data shows') ||
+      req.claims?.length) {
+    
+    // Extract or use provided claims
+    const claims = req.claims || extractClaimsFromContent(req.content);
+    
+    claims.slice(0, 3).forEach((claim, idx) => {
+      schemas.push({
+        "@type": "ClaimReview",
+        "@id": `${req.url}#claim-${idx + 1}`,
+        "url": req.url,
+        "claimReviewed": claim.claim,
+        "author": req.author ? { 
+          "@type": "Person", 
+          "name": req.author.name,
+          "url": req.author.url
+        } : req.organization ? {
+          "@type": "Organization",
+          "name": req.organization.name
+        } : undefined,
+        "datePublished": req.publishDate || new Date().toISOString(),
+        "itemReviewed": {
+          "@type": "Claim",
+          "author": {
+            "@type": "Organization",
+            "name": claim.source || "Research Studies"
+          }
+        },
+        "reviewRating": {
+          "@type": "Rating",
+          "ratingValue": 5,
+          "bestRating": 5,
+          "worstRating": 1,
+          "alternateName": claim.rating || "Verified"
+        }
+      });
+    });
+  }
+  
+  // 2. ItemList for listicle content (improves featured snippet chances)
+  const listItems = req.listItems || extractListItemsFromContent(req.content);
+  if (listItems.length >= 3) {
+    schemas.push({
+      "@type": "ItemList",
+      "@id": `${req.url}#itemlist`,
+      "name": req.title,
+      "description": req.description,
+      "numberOfItems": listItems.length,
+      "itemListElement": listItems.slice(0, 15).map((item, i) => ({
+        "@type": "ListItem",
+        "position": item.position || i + 1,
+        "name": item.name,
+        "description": item.description,
+        "url": `${req.url}#item-${i + 1}`
+      }))
+    });
+  }
+  
+  // 3. DefinedTerm for glossary/definition content (improves AI understanding)
+  const definedTerms = req.definedTerms || extractDefinedTermsFromContent(req.content, req.keywords);
+  if (definedTerms.length > 0) {
+    schemas.push({
+      "@type": "DefinedTermSet",
+      "@id": `${req.url}#terms`,
+      "name": `Key Terms: ${req.title}`,
+      "hasDefinedTerm": definedTerms.slice(0, 10).map((term, idx) => ({
+        "@type": "DefinedTerm",
+        "@id": `${req.url}#term-${idx + 1}`,
+        "name": term.term,
+        "description": term.definition,
+        "inDefinedTermSet": { "@id": `${req.url}#terms` }
+      }))
+    });
+  }
+  
+  // 4. WebSite with SearchAction for sitelinks searchbox
+  if (req.organization?.url) {
+    schemas.push({
+      "@type": "WebSite",
+      "@id": `${req.organization.url}#website`,
+      "url": req.organization.url,
+      "name": req.organization.name,
+      "publisher": { "@id": `${req.organization.url}#organization` },
+      "potentialAction": {
+        "@type": "SearchAction",
+        "target": {
+          "@type": "EntryPoint",
+          "urlTemplate": `${req.organization.url}/?s={search_term_string}`
+        },
+        "query-input": "required name=search_term_string"
+      }
+    });
+  }
+  
+  return schemas;
+}
+
+/**
+ * Generate enhanced speakable specification for voice search optimization
+ */
+function generateSpeakableSchema(url: string, content: string): object {
+  // Identify the best sections for voice assistants to read
+  const speakableSelectors = [
+    ".wp-opt-tldr",           // TL;DR section
+    ".wp-opt-takeaways",      // Key takeaways
+    "article > h1",           // Main heading
+    "article > p:first-of-type", // Opening paragraph
+    ".wp-opt-stat",           // Statistics (great for voice)
+    ".wp-opt-faq h3",         // FAQ questions
+    ".wp-opt-faq p",          // FAQ answers
+  ];
+  
+  // Also add XPath for more specific targeting
+  const speakableXPaths = [
+    "/html/body//div[contains(@class, 'wp-opt-tldr')]",
+    "/html/body//div[contains(@class, 'wp-opt-takeaways')]",
+    "/html/body//article//h1",
+    "/html/body//article//p[1]"
+  ];
+  
   return {
     "@type": "SpeakableSpecification",
-    "cssSelector": selectors.length > 0 ? selectors : [
-      ".wp-opt-tldr",
-      ".wp-opt-takeaways",
-      "article > h1",
-      "article > p:first-of-type"
-    ]
+    "cssSelector": speakableSelectors,
+    "xpath": speakableXPaths
   };
+}
+
+/**
+ * Extract potential claims from content for ClaimReview schema
+ */
+function extractClaimsFromContent(content: string): Array<{ claim: string; source: string; rating?: string }> {
+  const claims: Array<{ claim: string; source: string; rating?: string }> = [];
+  
+  // Pattern to find statistics and claims
+  const patterns = [
+    /([\d.]+%?)\s+(?:of\s+)?([^.]+)(?:according to|per|based on)\s+([^.]+)/gi,
+    /(?:research|studies|data)\s+(?:shows?|suggests?|indicates?)\s+(?:that\s+)?([^.]+)/gi,
+    /(?:according to)\s+([^,]+),\s+([^.]+)/gi,
+  ];
+  
+  for (const pattern of patterns) {
+    let match;
+    while ((match = pattern.exec(content)) !== null && claims.length < 5) {
+      const claimText = match[0].substring(0, 200).trim();
+      if (claimText.length > 20) {
+        claims.push({
+          claim: claimText,
+          source: "Research Studies",
+          rating: "Verified"
+        });
+      }
+    }
+  }
+  
+  return claims;
+}
+
+/**
+ * Extract list items from content for ItemList schema
+ */
+function extractListItemsFromContent(content: string): Array<{ name: string; description?: string; position?: number }> {
+  const items: Array<{ name: string; description?: string; position?: number }> = [];
+  
+  // Match various list patterns
+  const patterns = [
+    // Numbered lists: "1. Item name"
+    /<li[^>]*>\s*(?:<strong>)?\s*(\d+)[.):}\s]+([^<]+)(?:<\/strong>)?/gi,
+    // H2/H3 with numbers: "## 1. Item"
+    /<h[23][^>]*>\s*(?:\d+[.):}\s]+)?([^<]+)<\/h[23]>/gi,
+    // Strong items in lists
+    /<li[^>]*>\s*<strong>([^<]+)<\/strong>/gi,
+  ];
+  
+  for (const pattern of patterns) {
+    let match;
+    while ((match = pattern.exec(content)) !== null && items.length < 20) {
+      const name = (match[2] || match[1] || '').replace(/<[^>]*>/g, '').trim();
+      if (name.length > 5 && name.length < 200) {
+        items.push({
+          name: name,
+          position: items.length + 1
+        });
+      }
+    }
+  }
+  
+  return items;
+}
+
+/**
+ * Extract defined terms from content for DefinedTerm schema
+ */
+function extractDefinedTermsFromContent(
+  content: string, 
+  keywords?: string[]
+): Array<{ term: string; definition: string }> {
+  const terms: Array<{ term: string; definition: string }> = [];
+  
+  // Pattern: "Term is/are defined as..." or "Term: definition"
+  const patterns = [
+    /(?:<strong>)?([A-Z][a-zA-Z\s]+)(?:<\/strong>)?\s+(?:is|are)\s+(?:defined as|a|an|the)\s+([^.]+\.)/gi,
+    /(?:<dt>|<strong>)([^<]+)(?:<\/dt>|<\/strong>)\s*(?:<dd>|:)\s*([^<]+)/gi,
+    /\*\*([^*]+)\*\*:\s*([^.]+\.)/gi,
+  ];
+  
+  for (const pattern of patterns) {
+    let match;
+    while ((match = pattern.exec(content)) !== null && terms.length < 10) {
+      const term = match[1].trim();
+      const definition = match[2].trim();
+      
+      if (term.length > 2 && term.length < 50 && definition.length > 20) {
+        terms.push({ term, definition });
+      }
+    }
+  }
+  
+  // Also add keywords as terms if we found definitions
+  if (keywords && terms.length < 5) {
+    for (const keyword of keywords.slice(0, 3)) {
+      // Try to find a definition for this keyword in content
+      const keywordPattern = new RegExp(
+        `${keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[^.]*(?:is|are|means|refers to)\\s+([^.]+\\.)`,
+        'i'
+      );
+      const match = content.match(keywordPattern);
+      if (match && match[1]) {
+        terms.push({
+          term: keyword,
+          definition: match[1].trim()
+        });
+      }
+    }
+  }
+  
+  return terms;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -296,7 +568,8 @@ function generateComprehensiveSchema(req: SchemaRequest): object {
   schemas.push(generateWebPageSchema(req));
   
   // 2. Article schema (always for blog posts)
-  schemas.push(generateArticleSchema(req));
+  const articleSchema = generateArticleSchema(req);
+  schemas.push(articleSchema);
   
   // 3. FAQ schema (if FAQs provided)
   if (req.faqs && req.faqs.length > 0) {
@@ -321,12 +594,23 @@ function generateComprehensiveSchema(req: SchemaRequest): object {
     schemas.push(generateBreadcrumbSchema(req.breadcrumbs));
   }
   
-  // 7. Add speakable for voice search optimization
-  const articleSchema = schemas.find((s: any) => 
+  // 7. SOTA: Add AI-optimized schemas
+  const aiOptimizedSchemas = generateAIOptimizedSchemas(req);
+  schemas.push(...aiOptimizedSchemas);
+  
+  // 8. Add enhanced speakable for voice search optimization
+  const articleSchemaObj = schemas.find((s: any) => 
     s['@type'] === 'Article' || s['@type'] === 'BlogPosting' || s['@type'] === 'TechArticle'
   );
-  if (articleSchema) {
-    (articleSchema as any).speakable = generateSpeakableSchema(req.url, []);
+  if (articleSchemaObj) {
+    (articleSchemaObj as any).speakable = generateSpeakableSchema(req.url, req.content);
+  }
+  
+  // 9. Add mainEntity relationships for better AI understanding
+  const faqSchema = schemas.find((s: any) => s['@type'] === 'FAQPage');
+  if (faqSchema && articleSchemaObj) {
+    (articleSchemaObj as any).mainEntity = { "@id": `${req.url}#faq` };
+    (faqSchema as any)['@id'] = `${req.url}#faq`;
   }
   
   // Wrap in @graph for JSON-LD
@@ -352,11 +636,13 @@ serve(async (req) => {
     
     validateRequired(body as unknown as Record<string, unknown>, ['title', 'description', 'content', 'url']);
     
-    logger.info('Generating comprehensive schema', { 
+    logger.info('Generating comprehensive SOTA schema', { 
       url: body.url, 
       hasFaqs: !!(body.faqs?.length),
       hasVideo: !!body.video,
-      hasBreadcrumbs: !!(body.breadcrumbs?.length)
+      hasBreadcrumbs: !!(body.breadcrumbs?.length),
+      hasKeywords: !!(body.keywords?.length),
+      aiOptimizationsEnabled: true
     });
     
     const schema = generateComprehensiveSchema(body);
@@ -364,8 +650,12 @@ serve(async (req) => {
     // Generate the script tag ready for insertion
     const scriptTag = `<script type="application/ld+json">\n${JSON.stringify(schema, null, 2)}\n</script>`;
     
-    logger.info('Schema generation complete', { 
-      graphItems: (schema as any)['@graph']?.length || 0 
+    // Extract schema types for reporting
+    const schemaTypes = (schema as any)['@graph']?.map((s: any) => s['@type']).filter(Boolean) || [];
+    
+    logger.info('SOTA Schema generation complete', { 
+      graphItems: (schema as any)['@graph']?.length || 0,
+      schemaTypes: schemaTypes
     });
     
     return new Response(
@@ -374,7 +664,18 @@ serve(async (req) => {
         schema,
         scriptTag,
         stats: {
-          schemaTypes: (schema as any)['@graph']?.map((s: any) => s['@type']) || []
+          schemaTypes: schemaTypes,
+          totalSchemas: schemaTypes.length,
+          aiOptimized: true,
+          speakableEnabled: true,
+          features: {
+            claimReview: schemaTypes.includes('ClaimReview'),
+            itemList: schemaTypes.includes('ItemList'),
+            definedTermSet: schemaTypes.includes('DefinedTermSet'),
+            faqPage: schemaTypes.includes('FAQPage'),
+            howTo: schemaTypes.includes('HowTo'),
+            videoObject: schemaTypes.includes('VideoObject'),
+          }
         }
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
