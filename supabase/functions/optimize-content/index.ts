@@ -1488,14 +1488,73 @@ async function processOptimizationJob(
 
     jsonStr = repairJsonStringForParsing(jsonStr);
 
+// SOTA: Enterprise-grade JSON parsing with multiple fallback strategies
     let optimization: Record<string, unknown>;
+    
+    // Strategy 1: Direct parse after repair
     try {
       optimization = JSON.parse(jsonStr);
-    } catch (parseErr) {
-      logger.error('JSON parse error', { error: parseErr instanceof Error ? parseErr.message : 'Unknown', snippet: jsonStr.substring(0, 200) });
-      throw new Error('Failed to parse AI response as JSON');
+    } catch (parseErr1) {
+      logger.warn('Initial JSON parse failed, trying fallback strategies', { 
+        error: parseErr1 instanceof Error ? parseErr1.message : 'Unknown',
+        jsonLength: jsonStr?.length || 0
+      });
+      
+      // Strategy 2: Try to extract JSON from markdown code blocks
+      const codeBlockMatch = aiContent.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (codeBlockMatch) {
+        try {
+          optimization = JSON.parse(codeBlockMatch[1].trim());
+          logger.info('Successfully parsed JSON from code block');
+        } catch (parseErr2) {
+          logger.warn('Code block JSON parse also failed');
+        }
+      }
+      
+      // Strategy 3: Try to find and parse JSON object pattern
+      if (!optimization) {
+        const jsonObjectMatch = aiContent.match(/\{[\s\S]*"optimizedTitle"[\s\S]*"optimizedContent"[\s\S]*\}/);
+        if (jsonObjectMatch) {
+          try {
+            let cleanJson = jsonObjectMatch[0]
+              .replace(/[\x00-\x1F\x7F]/g, ' ') // Remove control characters
+              .replace(/,\s*([}\]])/g, '$1'); // Remove trailing commas
+            optimization = JSON.parse(cleanJson);
+            logger.info('Successfully parsed JSON from pattern match');
+          } catch (parseErr3) {
+            logger.warn('Pattern match JSON parse also failed');
+          }
+        }
+      }
+      
+      // Strategy 4: Create fallback optimization from raw content
+      if (!optimization) {
+        logger.warn('All JSON parse strategies failed, creating fallback from raw AI content');
+        
+        // Try to extract content between common markers
+        const titleMatch = aiContent.match(/["']?optimizedTitle["']?\s*[:"]\s*["']?([^"'\n]+)["']?/i);
+        const contentMatch = aiContent.match(/["']?optimizedContent["']?\s*[:"]\s*["']?([\s\S]+?)(?=["']?(?:metaDescription|h1|h2s|contentStrategy)["']?\s*[:"]|$)/i);
+        const metaMatch = aiContent.match(/["']?metaDescription["']?\s*[:"]\s*["']?([^"'\n]+)["']?/i);
+        
+        optimization = {
+          optimizedTitle: titleMatch ? titleMatch[1].trim() : (body.title || 'Untitled'),
+          metaDescription: metaMatch ? metaMatch[1].trim() : (body.metaDescription || ''),
+          h1: body.title || 'Untitled',
+          h2s: [],
+          optimizedContent: contentMatch ? contentMatch[1].trim() : aiContent,
+          contentStrategy: 'Fallback: AI response could not be parsed as structured JSON. Raw content preserved.',
+          references: [],
+          internalLinks: []
+        };
+        
+        logger.info('Created fallback optimization object', {
+          hasTitle: !!titleMatch,
+          hasContent: !!contentMatch,
+          hasMeta: !!metaMatch,
+          contentLength: optimization.optimizedContent?.toString().length || 0
+        });
+      }
     }
-
     // Validate required fields
     const requiredFields = ['optimizedTitle', 'metaDescription', 'h1', 'h2s', 'optimizedContent', 'contentStrategy', 'qualityScore'];
     for (const field of requiredFields) {
