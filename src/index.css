@@ -1,8 +1,10 @@
+/* Enterprise-Grade CSS - Page Perfector by papalexios001-wq */
+/* @import MUST come before @tailwind directives per CSS spec */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 @layer base {
   :root {
@@ -121,92 +123,170 @@
   }
 
   /* Score colors */
-  .score-critical { @apply text-destructive; }
-  .score-low { @apply text-warning; }
-  .score-medium { @apply text-yellow-400; }
-  .score-good { @apply text-success; }
-  .score-excellent { @apply text-primary; }
+  .score-critical {
+    @apply text-destructive;
+  }
+
+  .score-low {
+    @apply text-warning;
+  }
+
+  .score-medium {
+    @apply text-yellow-400;
+  }
+
+  .score-good {
+    @apply text-success;
+  }
+
+  .score-excellent {
+    @apply text-primary;
+  }
 
   /* ═══════════════════════════════════════════════════════════════
      WP OPTIMIZER CONTENT BOXES - Beautiful, Mobile-First Design
      ═══════════════════════════════════════════════════════════════ */
-  
+
   .wp-opt-tldr {
     @apply p-4 my-6 rounded-xl border-l-4 border-primary bg-gradient-to-r from-primary/10 via-primary/5 to-transparent;
     box-shadow: 0 4px 20px -4px hsl(var(--primary) / 0.15);
   }
-  .wp-opt-tldr strong { @apply text-primary; }
+
+  .wp-opt-tldr strong {
+    @apply text-primary;
+  }
 
   .wp-opt-toc {
     @apply p-4 my-6 rounded-xl bg-muted/50 border border-border/50;
   }
-  .wp-opt-toc ul { @apply mt-2 space-y-1 list-none pl-0; }
-  .wp-opt-toc li { @apply text-sm text-muted-foreground hover:text-primary transition-colors cursor-pointer; }
-  .wp-opt-toc li::before { content: "→ "; @apply text-primary mr-1; }
+
+  .wp-opt-toc ul {
+    @apply mt-2 space-y-1 list-none pl-0;
+  }
+
+  .wp-opt-toc li {
+    @apply text-sm text-muted-foreground hover:text-primary transition-colors cursor-pointer;
+  }
+
+  .wp-opt-toc li::before {
+    content: "→ ";
+    @apply text-primary mr-1;
+  }
 
   .wp-opt-insight {
     @apply p-4 my-6 rounded-xl border-l-4 border-info bg-info/10;
   }
-  .wp-opt-insight strong { @apply text-info; }
+
+  .wp-opt-insight strong {
+    @apply text-info;
+  }
 
   .wp-opt-tip {
     @apply p-4 my-6 rounded-xl border-l-4 border-success bg-gradient-to-r from-success/15 via-success/5 to-transparent;
     box-shadow: 0 4px 20px -4px hsl(var(--success) / 0.2);
   }
-  .wp-opt-tip strong { @apply text-success; }
+
+  .wp-opt-tip strong {
+    @apply text-success;
+  }
 
   .wp-opt-warning {
     @apply p-4 my-6 rounded-xl border-l-4 border-warning bg-warning/10;
   }
-  .wp-opt-warning strong { @apply text-warning; }
+
+  .wp-opt-warning strong {
+    @apply text-warning;
+  }
 
   .wp-opt-example {
     @apply p-4 my-6 rounded-xl bg-muted/30 border border-dashed border-border;
   }
-  .wp-opt-example strong { @apply text-muted-foreground; }
+
+  .wp-opt-example strong {
+    @apply text-muted-foreground;
+  }
 
   .wp-opt-stat {
     @apply p-4 my-6 rounded-xl bg-gradient-to-br from-primary/20 via-primary/10 to-transparent border border-primary/30 text-center;
   }
-  .wp-opt-stat strong { @apply text-primary block text-lg mb-1; }
+
+  .wp-opt-stat strong {
+    @apply text-primary block text-lg mb-1;
+  }
 
   .wp-opt-quote {
     @apply p-4 my-6 rounded-xl bg-muted/30 border-l-4 border-muted-foreground/50 italic;
   }
-  .wp-opt-quote blockquote { @apply text-lg leading-relaxed mb-2; }
-  .wp-opt-quote cite { @apply text-sm text-muted-foreground not-italic; }
+
+  .wp-opt-quote blockquote {
+    @apply text-lg leading-relaxed mb-2;
+  }
+
+  .wp-opt-quote cite {
+    @apply text-sm text-muted-foreground not-italic;
+  }
 
   .wp-opt-takeaways {
     @apply p-5 my-8 rounded-2xl bg-gradient-to-br from-success/15 via-success/5 to-transparent border border-success/30;
     box-shadow: 0 8px 32px -8px hsl(var(--success) / 0.2);
   }
-  .wp-opt-takeaways strong { @apply text-success text-lg block mb-3; }
-  .wp-opt-takeaways ul { @apply space-y-2 list-none pl-0; }
-  .wp-opt-takeaways li { @apply flex items-start gap-2; }
+
+  .wp-opt-takeaways strong {
+    @apply text-success text-lg block mb-3;
+  }
+
+  .wp-opt-takeaways ul {
+    @apply space-y-2 list-none pl-0;
+  }
+
+  .wp-opt-takeaways li {
+    @apply flex items-start gap-2;
+  }
 
   .wp-opt-faq {
     @apply p-4 my-4 rounded-xl bg-muted/30 border border-border/50 hover:border-primary/50 transition-colors;
   }
-  .wp-opt-faq h3 { @apply text-base font-semibold text-primary mb-2; }
-  .wp-opt-faq p { @apply text-sm text-muted-foreground leading-relaxed; }
+
+  .wp-opt-faq h3 {
+    @apply text-base font-semibold text-primary mb-2;
+  }
+
+  .wp-opt-faq p {
+    @apply text-sm text-muted-foreground leading-relaxed;
+  }
 
   .wp-opt-cta {
     @apply p-6 my-8 rounded-2xl text-center bg-gradient-to-r from-primary via-primary/90 to-primary text-primary-foreground;
     box-shadow: 0 8px 32px -8px hsl(var(--primary) / 0.4);
   }
-  .wp-opt-cta strong { @apply text-xl block mb-2; }
-  .wp-opt-cta p { @apply opacity-90; }
+
+  .wp-opt-cta strong {
+    @apply text-xl block mb-2;
+  }
+
+  .wp-opt-cta p {
+    @apply opacity-90;
+  }
 
   .wp-opt-comparison {
     @apply p-4 my-6 rounded-xl bg-muted/50 border border-border;
   }
-  .wp-opt-comparison strong { @apply text-foreground block mb-3; }
+
+  .wp-opt-comparison strong {
+    @apply text-foreground block mb-3;
+  }
 
   .wp-opt-checklist {
     @apply p-4 my-6 rounded-xl bg-muted/30 border border-border/50;
   }
-  .wp-opt-checklist ul { @apply space-y-2 list-none pl-0; }
-  .wp-opt-checklist li { @apply flex items-center gap-2 text-sm; }
+
+  .wp-opt-checklist ul {
+    @apply space-y-2 list-none pl-0;
+  }
+
+  .wp-opt-checklist li {
+    @apply flex items-center gap-2 text-sm;
+  }
 
   .wp-opt-internal {
     @apply text-primary underline underline-offset-2 hover:text-primary/80 transition-colors font-medium;
@@ -230,7 +310,11 @@
   }
 
   @keyframes shimmer {
-    0% { background-position: -200% 0; }
-    100% { background-position: 200% 0; }
+    0% {
+      background-position: -200% 0;
+    }
+    100% {
+      background-position: 200% 0;
+    }
   }
 }
